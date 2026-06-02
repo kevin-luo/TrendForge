@@ -5,7 +5,7 @@
   "description": "Local-first AI trend video workstation.",
   "type": "module",
   "scripts": {
-    "dev": "pnpm -r --parallel --filter @trendforge/server --filter @trendforge/web dev",
+    "dev": "node scripts/dev.mjs",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
