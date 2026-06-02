@@ -17,6 +17,9 @@ export type JobRow = {
   step?: string;
   output_path?: string;
   error_message?: string;
+  started_at?: string;
+  finished_at?: string;
+  created_at?: string;
 };
 
 export type SourceInfo = {

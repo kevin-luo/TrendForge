@@ -1753,6 +1753,13 @@ select {
 
 .output-file-info strong { color: #a7f3d0; font-size: 12px; font-weight: 700; }
 
+.render-time-label {
+  display: inline-block;
+  margin-top: 7px;
+  color: #67e8f9;
+  font-size: 12px;
+}
+
 .output-placeholder {
   display: flex;
   align-items: center;

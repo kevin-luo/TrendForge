@@ -309,7 +309,7 @@ export function App() {
     return row?.cues_json ? (JSON.parse(row.cues_json) as SubtitleCue[]) : [];
   }, [detail?.subtitles]);
 
-  const outputPath = detail?.finalVideoPath;
+  const outputPath = detail?.status === "exported" ? detail?.finalVideoPath : undefined;
 
   return (
     <div className="app-shell">
@@ -537,7 +537,7 @@ function tabIsDone(tab: TabId, detail?: ProjectDetail, job?: JobRow): boolean {
   if (tab === "voice") return (detail.assets?.some((a) => a.type === "audio")) ?? false;
   if (tab === "subtitles") return (detail.subtitles?.length ?? 0) > 0;
   if (tab === "cover") return Boolean(detail.coverPath);
-  if (tab === "export") return Boolean(detail.finalVideoPath);
+  if (tab === "export") return detail.status === "exported" && Boolean(detail.finalVideoPath);
   return false;
 }
 
@@ -1012,6 +1012,7 @@ function ExportPanel(props: {
   const [format, setFormat] = useState<"mp4" | "webm">("mp4");
   const [burnSubtitles, setBurnSubtitles] = useState(true);
   const isRunning = props.job?.status === "running" || props.job?.status === "pending";
+  const durationLabel = formatJobDuration(props.job, props.lang);
 
   return (
     <div className="work-panel">
@@ -1025,6 +1026,7 @@ function ExportPanel(props: {
             <div>
               <strong>{zh ? "输出文件" : "Output File"}</strong>
               <p className="mono-path">{props.outputPath}</p>
+              {durationLabel && <span className="render-time-label">{durationLabel}</span>}
             </div>
           </div>
           <button className="ghost-button" onClick={() => props.onOpenFolder(props.outputPath!)}>
@@ -1054,6 +1056,7 @@ function ExportPanel(props: {
         <div className="render-progress-bar">
           <div className="progress"><span style={{ width: `${props.job.progress}%` }} /></div>
           <p className="muted">{jobStepLabel(props.job.step ?? props.job.status, props.lang)}</p>
+          {durationLabel && <p className="muted">{durationLabel}</p>}
         </div>
       )}
     </div>
@@ -1215,7 +1218,7 @@ function Inspector(props: { lang: UiLang; detail?: ProjectDetail; script?: Video
         <div className="kv"><span>{c.ratio}</span><strong>{props.detail?.ratio ?? "9:16"}</strong></div>
         <div className="kv"><span>{c.template}</span><strong>{templateLabel(props.detail?.templateId ?? "neo-signal", props.lang)}</strong></div>
         <div className="kv"><span>{c.status}</span><strong>{projectStatusLabel(props.detail?.status ?? "draft", props.lang)}</strong></div>
-        {props.detail?.finalVideoPath && (
+        {props.detail?.status === "exported" && props.detail?.finalVideoPath && (
           <div className="kv output-kv"><span>{zh ? "输出" : "Output"}</span><strong className="output-path-label">{props.detail.finalVideoPath.split(/[\\/]/).at(-1)}</strong></div>
         )}
       </div>
@@ -1234,6 +1237,19 @@ function label(item: { zh: string; en: string }, lang: UiLang) {
 function viewTitle(view: ViewId, lang: UiLang) {
   const item = navItems.find((nav) => nav.id === view);
   return item ? label(item, lang) : "TrendForge";
+}
+
+function formatJobDuration(job: JobRow | undefined, lang: UiLang): string | undefined {
+  if (!job?.started_at) return undefined;
+  const start = new Date(job.started_at).getTime();
+  const end = job.finished_at ? new Date(job.finished_at).getTime() : Date.now();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return undefined;
+  const seconds = Math.max(0, Math.round((end - start) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  const value = minutes > 0 ? `${minutes}分${String(rest).padStart(2, "0")}秒` : `${rest}秒`;
+  if (job.status === "success") return lang === "zh" ? `渲染用时 ${value}` : `Render time ${value}`;
+  return lang === "zh" ? `已用时 ${value}` : `Elapsed ${value}`;
 }
 
 function sourceLabel(id: string, lang: UiLang) {

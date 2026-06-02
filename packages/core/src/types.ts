@@ -84,6 +84,7 @@ export type Scene = {
   voiceTextEn?: string;
   items?: TrendItem[];
   visualHint?: string;
+  metadata?: Record<string, unknown>;
 };
 
 export type ScriptGenerateInput = {

@@ -13,6 +13,7 @@ import {
   TrendForgeError,
   type ExportSettings,
   type Ratio,
+  type TrendItem,
   type SourceType,
   type SubtitleCue,
   type TtsResult,
@@ -20,7 +21,7 @@ import {
 } from "@trendforge/core";
 import { FfmpegService } from "@trendforge/ffmpeg";
 import { createScriptProvider } from "@trendforge/llm";
-import { renderFrames } from "@trendforge/renderer/html-renderer";
+import { renderScenePosters } from "@trendforge/renderer/html-renderer";
 import { exportAss, exportSrt, exportVtt, generateSubtitlesFromScenes } from "@trendforge/subtitles";
 import { renderNeoSignalHtml } from "@trendforge/templates";
 import { createTtsProvider } from "@trendforge/tts";
@@ -184,14 +185,17 @@ app.post("/api/projects/:id/script/generate", async (request) => {
     const items = (await prisma.trendItem.findMany({ where: { project_id: id }, orderBy: { rank: "asc" } })).map(mapTrendItem);
     await update(35, "生成脚本");
     const provider = createScriptProvider(await getSettings());
+    await writeLog({ projectId: id, level: "info", message: `脚本引擎：${provider.name}` });
+    await update(42, `生成脚本（${provider.name}）`);
     const script = await provider.generate({
       projectId: id,
       items,
       language: body.language ?? "zh",
       scriptType: body.scriptType ?? "trend-list"
     });
+    const enrichedScript = enrichScriptWithItems(script, items);
     await update(75, "保存脚本");
-    await saveScript(id, script);
+    await saveScript(id, enrichedScript);
     await prisma.project.update({ where: { id }, data: { status: "scripting", updated_at: nowIso() } });
     await update(95, "脚本生成完成");
     return storage.projectPath(id, "script", "script.json");
@@ -222,9 +226,10 @@ app.post("/api/projects/:id/script/regenerate-scene", async (request) => {
     scene,
     instruction: body.instruction
   });
-  const updated = { ...script, scenes: script.scenes.map((item) => (item.id === scene.id ? next : item)) };
+  const enriched = enrichScriptWithItems({ ...script, scenes: [next] }, items).scenes[0] ?? next;
+  const updated = { ...script, scenes: script.scenes.map((item) => (item.id === scene.id ? { ...enriched, id: scene.id } : item)) };
   await saveScript(id, updated);
-  return next;
+  return enriched;
 });
 
 app.get("/api/tts/providers", async () => {
@@ -364,8 +369,10 @@ app.post("/api/projects/:id/render", async (request) => {
   const { id } = request.params as { id: string };
   const body = request.body as Partial<ExportSettings>;
   const job = await jobs.create(id, "render_video", async (_jobId, update) => {
+    const renderStartedAt = Date.now();
     await update(5, "读取项目数据");
     const project = await prisma.project.findUniqueOrThrow({ where: { id } });
+    await prisma.project.update({ where: { id }, data: { status: "rendering", final_video_path: null, updated_at: nowIso() } });
     const script = await latestScript(id);
     const ratio = body.ratio ?? (project.ratio as Ratio);
     const size = body.width && body.height ? { width: body.width, height: body.height } : ratioToSize(ratio);
@@ -373,8 +380,10 @@ app.post("/api/projects/:id/render", async (request) => {
     const cues = await latestCues(id);
 
     // Duration: TTS first, then sum of scene durations (default 6s/scene)
-    const sceneDuration = script.scenes.reduce((sum, scene) => sum + (scene.duration ?? 6), 0);
+    const baseSceneDurations = script.scenes.map((scene) => scene.duration ?? 6);
+    const sceneDuration = baseSceneDurations.reduce((sum, value) => sum + value, 0);
     const duration = Math.max(tts?.duration ?? 0, sceneDuration, 10);
+    const sceneDurations = fitSceneDurations(baseSceneDurations, duration);
 
     const fps = body.fps ?? 30;
     const payload = {
@@ -403,25 +412,28 @@ app.post("/api/projects/:id/render", async (request) => {
     const ext = body.format === "webm" ? "webm" : "mp4";
     const ffmpeg = await createFfmpegServiceFromSettings();
 
-    await update(20, "渲染模板帧");
-    const frames = await renderFrames({
+    await update(20, "渲染场景画面");
+    const posters = await renderScenePosters({
       html: htmlPath,
       width: size.width,
       height: size.height,
-      fps,
-      duration,
       outputDir: storage.projectPath(id, "render"),
       onProgress: async (written, total) => {
-        if (written === total || written % Math.max(1, Math.round(total / 12)) === 0) {
-          await update(20 + Math.round((written / total) * 48), `渲染模板帧 ${written}/${total}`);
-        }
+        await update(20 + Math.round((written / total) * 24), `渲染场景画面 ${written}/${total}`);
       }
     });
 
-    await update(70, "合成视频画面");
+    await update(50, "合成动态视频");
     const rawVideo = storage.projectPath(id, "exports", `raw.${ext}`);
-    await ffmpeg.framesToVideo(frames.frameGlob, fps, duration, rawVideo, ext === "webm" ? "libvpx-vp9" : "libx264");
-    await update(76, "视频画面完成");
+    await ffmpeg.sceneImagesToVideo(
+      posters.scenes.map((poster, index) => ({ path: poster.path, duration: sceneDurations[index] ?? 6 })),
+      size.width,
+      size.height,
+      fps,
+      rawVideo,
+      ext === "webm" ? "libvpx-vp9" : "libx264"
+    );
+    await update(76, `视频画面完成，用时 ${formatElapsed(Date.now() - renderStartedAt)}`);
     let finalPath = rawVideo;
 
     if (tts?.audioPath && existsSync(tts.audioPath)) {
@@ -437,7 +449,7 @@ app.post("/api/projects/:id/render", async (request) => {
     }
 
     await prisma.project.update({ where: { id }, data: { status: "exported", final_video_path: outputPath, updated_at: nowIso() } });
-    await update(96, "导出完成");
+    await update(96, `导出完成，用时 ${formatElapsed(Date.now() - renderStartedAt)}`);
     return outputPath;
   });
   return job;
@@ -665,4 +677,92 @@ async function readTtsResult(projectId: string): Promise<TtsResult | undefined> 
   const file = storage.projectPath(projectId, "audio", "tts-result.json");
   if (!existsSync(file)) return undefined;
   return JSON.parse(await readFile(file, "utf8")) as TtsResult;
+}
+
+function enrichScriptWithItems(script: VideoScript, items: TrendItem[]): VideoScript {
+  let cursor = 0;
+  const scenes = script.scenes.map((scene) => {
+    if (scene.type !== "item") return scene;
+    const matched = matchTrendItem(scene.title, items) ?? items[cursor];
+    if (!matched) return scene;
+    cursor = Math.min(items.length, Math.max(cursor + 1, items.indexOf(matched) + 1));
+    const sourceMetrics = [
+      matched.rank ? `Product Hunt #${matched.rank}` : undefined,
+      matched.score ? `${matched.score} upvotes` : undefined,
+      matched.comments ? `${matched.comments} comments` : undefined
+    ].filter((value): value is string => Boolean(value));
+    const metadata = normalizeSceneMetadata(scene.metadata, matched, sourceMetrics);
+    return {
+      ...scene,
+      title: scene.title || matched.title,
+      screenText: enrichScreenText(scene.screenText, matched),
+      visualHint: scene.visualHint ?? `${matched.title} 产品图文海报`,
+      items: [matched],
+      metadata
+    };
+  });
+  return {
+    ...script,
+    scenes,
+    voiceoverText: scenes.map((scene) => scene.voiceText).join("\n")
+  };
+}
+
+function matchTrendItem(title: string, items: TrendItem[]): TrendItem | undefined {
+  const normalizedTitle = normalizeText(title);
+  return items.find((item) => {
+    const normalizedItem = normalizeText(item.title);
+    return normalizedTitle.includes(normalizedItem) || normalizedItem.includes(normalizedTitle);
+  });
+}
+
+function normalizeText(value: string): string {
+  return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function enrichScreenText(value: string, item: TrendItem): string {
+  const parts = [value.trim(), item.summary?.trim(), item.content?.trim()].filter(Boolean);
+  const unique = Array.from(new Set(parts));
+  return unique.join(" ").slice(0, 180);
+}
+
+function normalizeSceneMetadata(
+  metadata: Record<string, unknown> | undefined,
+  item: TrendItem,
+  sourceMetrics: string[]
+): Record<string, unknown> {
+  const next = metadata && typeof metadata === "object" ? { ...metadata } : {};
+  next.layout = safeChoice(String(next.layout ?? ""), ["hero-image-left", "hero-image-right", "image-top", "split-brief", "metric-focus"], item.rank && item.rank % 2 === 0 ? "hero-image-left" : "hero-image-right");
+  next.motion = safeChoice(String(next.motion ?? ""), ["push-in", "drift-left", "drift-right", "reveal-up", "scanline"], item.rank && item.rank % 2 === 0 ? "drift-left" : "push-in");
+  next.highlights = readStringArray(next.highlights).length
+    ? readStringArray(next.highlights).slice(0, 4)
+    : [item.summary, item.content].filter(Boolean).join(" ").split(/[。；;.]/).map((text) => text.trim()).filter(Boolean).slice(0, 3);
+  next.metrics = readStringArray(next.metrics).length ? readStringArray(next.metrics).slice(0, 3) : sourceMetrics;
+  next.imageRole = next.imageRole ?? (item.thumbnail ? "product-image" : "brand-card");
+  next.posterTone = next.posterTone ?? "科技产品日榜";
+  return next;
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+function safeChoice(value: string, choices: string[], fallback: string): string {
+  return choices.includes(value) ? value : fallback;
+}
+
+function fitSceneDurations(values: number[], totalDuration: number): number[] {
+  if (!values.length) return [];
+  const sum = values.reduce((total, value) => total + value, 0);
+  if (sum <= 0) return values.map(() => totalDuration / values.length);
+  const scale = totalDuration / sum;
+  return values.map((value) => Math.max(1.5, value * scale));
+}
+
+function formatElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return minutes > 0 ? `${minutes}分${String(rest).padStart(2, "0")}秒` : `${rest}秒`;
 }

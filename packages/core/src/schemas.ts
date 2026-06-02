@@ -26,7 +26,8 @@ export const sceneSchema = z.object({
   voiceText: z.string().min(1),
   voiceTextEn: z.string().optional(),
   items: z.array(trendItemSchema).optional(),
-  visualHint: z.string().optional()
+  visualHint: z.string().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional()
 });
 
 // 支持 LLM 可能返回的非标准 language 字符串，统一 coerce

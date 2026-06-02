@@ -32,6 +32,24 @@ export interface RenderFramesResult {
   frameGlob: string;
 }
 
+export interface RenderScenePostersOptions {
+  html: string;
+  width: number;
+  height: number;
+  outputDir: string;
+  onProgress?: (written: number, total: number) => Promise<void> | void;
+}
+
+export interface ScenePoster {
+  path: string;
+  index: number;
+}
+
+export interface RenderScenePostersResult {
+  posterDir: string;
+  scenes: ScenePoster[];
+}
+
 // Chrome/Chromium binary search order
 const CHROME_CANDIDATES = [
   process.env.CHROME_PATH ?? "",
@@ -136,4 +154,81 @@ export async function renderFrames(opts: RenderFramesOptions): Promise<RenderFra
     frameCount: totalFrames,
     frameGlob: path.join(frameDir, "frame_%06d.png")
   };
+}
+
+export async function renderScenePosters(opts: RenderScenePostersOptions): Promise<RenderScenePostersResult> {
+  const { html, width, height, outputDir, onProgress } = opts;
+
+  const executablePath = findChrome();
+  if (!executablePath) {
+    throw new Error(
+      "找不到 Chrome 可执行文件。请安装 Google Chrome 或设置 CHROME_PATH 环境变量。"
+    );
+  }
+
+  const posterDir = path.join(outputDir, "posters");
+  await rm(posterDir, { recursive: true, force: true });
+  await mkdir(posterDir, { recursive: true });
+
+  let browser: Browser | undefined;
+  try {
+    browser = await puppeteer.launch({
+      executablePath,
+      headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--disable-web-security",
+        "--allow-file-access-from-files",
+        `--window-size=${width},${height}`
+      ]
+    });
+
+    const page = await browser.newPage();
+    await page.setViewport({ width, height, deviceScaleFactor: 1 });
+    const fileUrl = `file:///${html.replace(/\\/g, "/")}`;
+    await page.goto(fileUrl, { waitUntil: "load" });
+
+    await page.evaluate(async () => {
+      await document.fonts?.ready;
+      await Promise.all(
+        Array.from(document.images).map((img) =>
+          img.complete ? Promise.resolve() : new Promise<void>((resolve) => {
+            img.addEventListener("load", () => resolve(), { once: true });
+            img.addEventListener("error", () => resolve(), { once: true });
+          })
+        )
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, 350));
+    });
+
+    const sceneCount = await page.evaluate(() => document.querySelectorAll(".scene").length);
+    const total = Math.max(1, sceneCount);
+
+    const posters: ScenePoster[] = [];
+    for (let index = 0; index < total; index++) {
+      await page.evaluate((activeIndex: number) => {
+        document.documentElement.classList.add("poster-mode");
+        const scenes = document.querySelectorAll<HTMLElement>(".scene");
+        scenes.forEach((scene, sceneIndex) => {
+          const visible = sceneIndex === activeIndex;
+          scene.style.animation = "none";
+          scene.style.opacity = visible ? "1" : "0";
+          scene.style.visibility = visible ? "visible" : "hidden";
+          scene.style.transform = "none";
+        });
+      }, index);
+
+      const posterPath = path.join(posterDir, `scene_${String(index).padStart(3, "0")}.png`);
+      await (page as any).screenshot({ path: posterPath, type: "png" });
+      posters.push({ path: posterPath, index });
+      await onProgress?.(index + 1, total);
+    }
+
+    return { posterDir, scenes: posters };
+  } finally {
+    await browser?.close();
+  }
 }

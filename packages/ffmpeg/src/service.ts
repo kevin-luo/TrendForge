@@ -14,6 +14,11 @@ export interface SceneVideoOptions {
   codec?: "libx264" | "libvpx-vp9";
 }
 
+export interface SceneImageInput {
+  path: string;
+  duration: number;
+}
+
 const requireInstaller = createRequire(import.meta.url);
 const bundledFfmpegPath = installerPath("@ffmpeg-installer/ffmpeg", "ffmpeg");
 const bundledFfprobePath = installerPath("@ffprobe-installer/ffprobe", "ffprobe");
@@ -242,6 +247,59 @@ export class FfmpegService {
       outputPath
     ];
     await this.run(this.ffmpegPath, args);
+    return outputPath;
+  }
+
+  async sceneImagesToVideo(
+    inputs: SceneImageInput[],
+    width: number,
+    height: number,
+    fps: number,
+    outputPath: string,
+    codec: "libx264" | "libvpx-vp9" = "libx264"
+  ): Promise<string> {
+    if (!inputs.length) {
+      throw new TrendForgeError("FFMPEG_INPUT_MISSING", "缺少场景图片", { outputPath }, 400);
+    }
+
+    const normalizedInputs = inputs.map((input) => ({
+      path: input.path.replace(/\\/g, "/"),
+      duration: Math.max(1, input.duration),
+      frames: Math.max(1, Math.round(input.duration * fps))
+    }));
+    const totalDuration = normalizedInputs.reduce((sum, input) => sum + input.duration, 0);
+    const filterParts = normalizedInputs.map((input, index) => {
+      const zoomExpr = index % 2 === 0
+        ? "min(1.055,1+0.00055*on)"
+        : "max(1.0,1.055-0.00045*on)";
+      const xExpr = index % 3 === 0 ? `(iw-ow)*on/${input.frames}` : "(iw-ow)/2";
+      const yExpr = index % 3 === 1 ? `(ih-oh)*on/${input.frames}` : "(ih-oh)/2";
+      return [
+        `[${index}:v]scale=${Math.ceil(width * 1.08)}:${Math.ceil(height * 1.08)}:force_original_aspect_ratio=increase,`,
+        `crop=${Math.ceil(width * 1.08)}:${Math.ceil(height * 1.08)},`,
+        `zoompan=z='${zoomExpr}':x='${xExpr}':y='${yExpr}':d=${input.frames}:fps=${fps}:s=${width}x${height},`,
+        `fade=t=in:st=0:d=0.28,fade=t=out:st=${Math.max(0.3, input.duration - 0.32).toFixed(2)}:d=0.28,`,
+        "format=yuv420p,setpts=PTS-STARTPTS",
+        `[v${index}]`
+      ].join("");
+    });
+    const concatInputs = normalizedInputs.map((_input, index) => `[v${index}]`).join("");
+    const filterComplex = `${filterParts.join(";")};${concatInputs}concat=n=${normalizedInputs.length}:v=1:a=0[outv]`;
+
+    const codecArgs = codec === "libvpx-vp9"
+      ? ["-c:v", "libvpx-vp9", "-b:v", "2M", "-pix_fmt", "yuv420p"]
+      : ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p"];
+
+    await this.run(this.ffmpegPath, [
+      "-y",
+      ...normalizedInputs.flatMap((input) => ["-loop", "1", "-framerate", String(fps), "-t", input.duration.toFixed(3), "-i", input.path]),
+      "-filter_complex", filterComplex,
+      "-map", "[outv]",
+      "-r", String(fps),
+      "-t", totalDuration.toFixed(3),
+      ...codecArgs,
+      outputPath
+    ]);
     return outputPath;
   }
 

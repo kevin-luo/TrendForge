@@ -251,9 +251,15 @@ function coerceLlmScene(raw: any): unknown {
     screenText: coerceStr(raw.screenText, raw.screen_text, raw.text, raw.content, raw.title, "—"),
     voiceText: coerceStr(raw.voiceText, raw.voice_text, raw.narration, raw.script, raw.text, raw.content, raw.title, "—"),
     voiceTextEn: raw.voiceTextEn ?? raw.voice_text_en ?? undefined,
-    visualHint: raw.visualHint ?? raw.visual_hint ?? undefined
-    // items 故意不透传，避免缺少 raw 字段导致嵌套校验失败
+    visualHint: raw.visualHint ?? raw.visual_hint ?? undefined,
+    metadata: coerceMetadata(raw.metadata ?? raw.visualPlan ?? raw.visual_plan ?? raw.layoutPlan ?? raw.layout_plan)
+    // items 由服务端按真实数据源回填
   };
+}
+
+function coerceMetadata(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
 }
 
 /** 确保每个 scene 都有 id（正常解析路径也调用此函数做最终保证）。 */
