@@ -1,0 +1,121 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id              String   @id
+  title           String
+  type            String
+  status          String
+  source_type     String?
+  language        String   @default("zh")
+  ratio           String   @default("9:16")
+  template_id     String   @default("neo-signal")
+  cover_path      String?
+  final_video_path String?
+  created_at      String
+  updated_at      String
+
+  trend_items     TrendItem[]
+  video_scripts   VideoScript[]
+  assets          Asset[]
+  subtitles       Subtitle[]
+  render_jobs     RenderJob[]
+  logs            Log[]
+}
+
+model TrendItem {
+  id          String @id
+  project_id  String?
+  source      String
+  external_id String?
+  title       String
+  url         String?
+  summary     String?
+  content     String?
+  author      String?
+  score       Int    @default(0)
+  comments    Int    @default(0)
+  rank        Int    @default(0)
+  thumbnail   String?
+  raw_json    String?
+  created_at  String
+
+  project     Project? @relation(fields: [project_id], references: [id], onDelete: Cascade)
+}
+
+model VideoScript {
+  id             String @id
+  project_id     String
+  title          String
+  script_json    String
+  voiceover_text String?
+  created_at     String
+  updated_at     String
+
+  project        Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+}
+
+model Asset {
+  id         String @id
+  project_id String
+  type       String
+  path       String
+  meta_json  String?
+  created_at String
+
+  project    Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+}
+
+model Subtitle {
+  id         String @id
+  project_id String
+  format     String
+  path       String?
+  cues_json  String?
+  created_at String
+  updated_at String
+
+  project    Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+}
+
+model RenderJob {
+  id            String @id
+  project_id    String
+  type          String @default("render_video")
+  status        String
+  progress      Int    @default(0)
+  step          String?
+  output_path   String?
+  error_message String?
+  started_at    String?
+  finished_at   String?
+  created_at    String
+
+  project       Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  logs          Log[]
+}
+
+model AppSetting {
+  key        String @id
+  value      String?
+  updated_at String
+}
+
+model Log {
+  id           String @id
+  project_id   String?
+  job_id       String?
+  level        String
+  message      String
+  context_json String?
+  created_at   String
+
+  project      Project? @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  job          RenderJob? @relation(fields: [job_id], references: [id], onDelete: Cascade)
+}

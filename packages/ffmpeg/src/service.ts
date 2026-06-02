@@ -1,0 +1,304 @@
+import { spawn } from "node:child_process";
+import { access } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { TrendForgeError, type Ratio, type Scene } from "@trendforge/core";
+import type { CommandResult, MediaInfo } from "./types.js";
+
+export interface SceneVideoOptions {
+  scenes: Scene[];
+  width: number;
+  height: number;
+  duration: number;
+  fps: number;
+  outputPath: string;
+  codec?: "libx264" | "libvpx-vp9";
+}
+
+const requireInstaller = createRequire(import.meta.url);
+const bundledFfmpegPath = installerPath("@ffmpeg-installer/ffmpeg", "ffmpeg");
+const bundledFfprobePath = installerPath("@ffprobe-installer/ffprobe", "ffprobe");
+
+export class FfmpegService {
+  private readonly ffmpegPath: string;
+  private readonly ffprobePath: string;
+
+  /** Exposed so callers can run arbitrary ffmpeg commands */
+  get ffmpegBin(): string { return this.ffmpegPath; }
+
+  constructor(ffmpegPath = process.env.FFMPEG_PATH, ffprobePath = process.env.FFPROBE_PATH) {
+    this.ffmpegPath = configuredPath(ffmpegPath, bundledFfmpegPath);
+    this.ffprobePath = configuredPath(ffprobePath, bundledFfprobePath);
+  }
+
+  async check(): Promise<{ ffmpeg: boolean; ffprobe: boolean }> {
+    const [ffmpeg, ffprobe] = await Promise.all([this.commandAvailable(this.ffmpegPath), this.commandAvailable(this.ffprobePath)]);
+    return { ffmpeg, ffprobe };
+  }
+
+  async getMediaInfo(inputPath: string): Promise<MediaInfo> {
+    const result = await this.run(this.ffprobePath, [
+      "-v",
+      "error",
+      "-print_format",
+      "json",
+      "-show_format",
+      "-show_streams",
+      inputPath
+    ]);
+    const raw = JSON.parse(result.stdout) as {
+      format?: { duration?: string };
+      streams?: Array<Record<string, unknown>>;
+    };
+    const video = raw.streams?.find((stream) => stream.codec_type === "video");
+    const audio = raw.streams?.find((stream) => stream.codec_type === "audio");
+    return {
+      duration: raw.format?.duration ? Number(raw.format.duration) : undefined,
+      width: video?.width ? Number(video.width) : undefined,
+      height: video?.height ? Number(video.height) : undefined,
+      fps: parseFps(String(video?.avg_frame_rate ?? "")),
+      videoCodec: video?.codec_name ? String(video.codec_name) : undefined,
+      audioCodec: audio?.codec_name ? String(audio.codec_name) : undefined,
+      raw
+    };
+  }
+
+  async extractAudio(videoPath: string, outputPath: string): Promise<string> {
+    await this.run(this.ffmpegPath, ["-y", "-i", videoPath, "-vn", "-acodec", "copy", outputPath]);
+    return outputPath;
+  }
+
+  async mergeAudio(videoPath: string, audioPath: string, outputPath: string): Promise<string> {
+    await this.run(this.ffmpegPath, ["-y", "-i", videoPath, "-i", audioPath, "-c:v", "copy", "-map", "0:v:0", "-map", "1:a:0", "-shortest", outputPath]);
+    return outputPath;
+  }
+
+  async burnSubtitles(videoPath: string, subtitlePath: string, outputPath: string): Promise<string> {
+    const escaped = subtitlePath.replace(/\\/g, "/").replace(/:/g, "\\:");
+    await this.run(this.ffmpegPath, ["-y", "-i", videoPath, "-vf", `ass='${escaped}'`, "-c:a", "copy", outputPath]);
+    return outputPath;
+  }
+
+  async cropToRatio(videoPath: string, ratio: Ratio, outputPath: string): Promise<string> {
+    const expression = cropExpression(ratio);
+    await this.run(this.ffmpegPath, ["-y", "-i", videoPath, "-vf", expression, outputPath]);
+    return outputPath;
+  }
+
+  async resize(videoPath: string, width: number, height: number, outputPath: string): Promise<string> {
+    await this.run(this.ffmpegPath, ["-y", "-i", videoPath, "-vf", `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`, outputPath]);
+    return outputPath;
+  }
+
+  async concatVideos(inputs: string[], outputPath: string): Promise<string> {
+    const args = ["-y", ...inputs.flatMap((input) => ["-i", input]), "-filter_complex", `concat=n=${inputs.length}:v=1:a=1`, outputPath];
+    await this.run(this.ffmpegPath, args);
+    return outputPath;
+  }
+
+  /**
+   * Render a multi-scene video using ffmpeg lavfi + drawtext overlays.
+   * Each scene occupies an equal time slice.
+   * No external browser required — works purely with ffmpeg filters.
+   */
+  async renderSceneVideo(opts: SceneVideoOptions): Promise<string> {
+    const { scenes, width, height, duration, fps, outputPath, codec = "libx264" } = opts;
+    const sceneDuration = duration / Math.max(1, scenes.length);
+    const isPortrait = height > width;
+
+    // Build the complex filtergraph:
+    // 1. color base background
+    // 2. For each scene: overlay title + subtitle text visible during its time window
+    const filterParts: string[] = [];
+    const titleSize = isPortrait ? Math.round(height * 0.052) : Math.round(height * 0.055);
+    const bodySize = isPortrait ? Math.round(height * 0.028) : Math.round(height * 0.030);
+    const subtitleSize = isPortrait ? Math.round(height * 0.020) : Math.round(height * 0.022);
+
+    // Helper to escape ffmpeg drawtext special chars
+    const esc = (s: string) =>
+      s.replace(/\\/g, "\\\\").replace(/'/g, "’").replace(/:/g, "\\:").replace(/\[/g, "\\[").replace(/\]/g, "\\]");
+
+    // Truncate long text for display
+    const trunc = (s: string, max: number) => s.length > max ? s.slice(0, max - 1) + "…" : s;
+
+    // Accent bar + scene number box (drawbox)
+    const padX = Math.round(width * 0.06);
+    const padY = Math.round(height * 0.08);
+    const barH = Math.round(height * 0.004);
+    const sceneNumberY = padY;
+    const titleY = padY + barH + Math.round(height * 0.03);
+    const bodyY = titleY + titleSize + Math.round(height * 0.025);
+    const subtitleY = Math.round(height * 0.88);
+
+    // Background gradient base is cyan-tinted dark
+    const bgFilter = `color=c=0x080B12:s=${width}x${height}:r=${fps}:d=${duration}[bg]`;
+    filterParts.push(bgFilter);
+
+    // Grid overlay (subtle dot pattern via geq) — skip for simplicity, just use background
+
+    const drawFilters: string[] = [];
+
+    scenes.forEach((scene, i) => {
+      const start = i * sceneDuration;
+      const end = start + sceneDuration;
+      const enable = `between(t,${start.toFixed(2)},${end.toFixed(2)})`;
+
+      const titleText = esc(trunc(scene.title, 60));
+      const bodyText = esc(trunc(scene.screenText, 120));
+      const subText = esc(trunc(scene.voiceText, 100));
+      const sceneNum = scene.type === "item" ? String(scene.items?.[0]?.rank ?? i + 1) : scene.type.toUpperCase();
+
+      // Accent top bar
+      drawFilters.push(
+        `drawbox=x=${padX}:y=${padY - barH - 4}:w=${Math.round(width * 0.12)}:h=${barH}:color=0x67E8F9:t=fill:enable='${enable}'`
+      );
+      // Scene number / type badge
+      drawFilters.push(
+        `drawtext=text='${esc(sceneNum)}':fontsize=${Math.round(titleSize * 0.55)}:fontcolor=0x67E8F9:x=${padX}:y=${sceneNumberY - barH - 4 - Math.round(height * 0.025)}:alpha=0.85:enable='${enable}'`
+      );
+      // Title
+      drawFilters.push(
+        `drawtext=text='${titleText}':fontsize=${titleSize}:fontcolor=white:x=${padX}:y=${titleY}:line_spacing=4:enable='${enable}'`
+      );
+      // Body text (wrapped via multiple lines)
+      const words = bodyText.split(" ");
+      const charsPerLine = Math.floor(width * 0.7 / (bodySize * 0.55));
+      let line = "", lines: string[] = [];
+      for (const w of words) {
+        if ((line + " " + w).length > charsPerLine && line) { lines.push(line); line = w; }
+        else line = line ? line + " " + w : w;
+      }
+      if (line) lines.push(line);
+      lines.slice(0, 4).forEach((l, li) => {
+        drawFilters.push(
+          `drawtext=text='${esc(l)}':fontsize=${bodySize}:fontcolor=0xD8E4F8:x=${padX}:y=${bodyY + li * (bodySize + 8)}:enable='${enable}'`
+        );
+      });
+      // Subtitle bar at bottom
+      drawFilters.push(
+        `drawbox=x=${padX}:y=${subtitleY - 10}:w=${width - padX * 2}:h=${subtitleSize + 28}:color=0x000000@0.5:t=fill:enable='${enable}'`
+      );
+      drawFilters.push(
+        `drawtext=text='${subText}':fontsize=${subtitleSize}:fontcolor=white:x=${padX + 10}:y=${subtitleY}:enable='${enable}'`
+      );
+    });
+
+    // Combine all draw filters as a chain on [bg]
+    const allFilters = drawFilters.join(",");
+    const filterComplex = `[0:v]${allFilters}[out]`;
+
+    const codecArgs = codec === "libvpx-vp9"
+      ? ["-c:v", "libvpx-vp9", "-b:v", "2M"]
+      : ["-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p"];
+
+    await this.run(this.ffmpegPath, [
+      "-y",
+      "-f", "lavfi",
+      "-i", `color=c=0x080B12:s=${width}x${height}:r=${fps}:d=${duration}`,
+      "-filter_complex", filterComplex,
+      "-map", "[out]",
+      "-t", String(duration),
+      ...codecArgs,
+      outputPath
+    ]);
+
+    return outputPath;
+  }
+
+  /**
+   * Assemble a PNG frame sequence into a video.
+   * `frameGlob` must be an ffmpeg-style pattern like `/path/frames/frame_%06d.png`
+   */
+  async framesToVideo(frameGlob: string, fps: number, duration: number, outputPath: string, codec: "libx264" | "libvpx-vp9" = "libx264"): Promise<string> {
+    const args = [
+      "-y",
+      "-framerate", String(fps),
+      "-i", frameGlob,
+      "-t", String(duration),
+      "-c:v", codec,
+      "-pix_fmt", "yuv420p",
+      ...(codec === "libx264" ? ["-preset", "fast", "-crf", "18"] : ["-b:v", "2M"]),
+      outputPath
+    ];
+    await this.run(this.ffmpegPath, args);
+    return outputPath;
+  }
+
+  async createColorVideo(width: number, height: number, duration: number, outputPath: string, color = "#080B12", fps = 30): Promise<string> {
+    await this.run(this.ffmpegPath, [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      `color=c=${color}:s=${width}x${height}:r=${fps}:d=${duration}`,
+      "-pix_fmt",
+      "yuv420p",
+      outputPath
+    ]);
+    return outputPath;
+  }
+
+  async run(command: string, args: string[]): Promise<CommandResult> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(command, args, { windowsHide: true });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => {
+        stdout += String(chunk);
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr += String(chunk);
+      });
+      child.on("error", (error) => {
+        reject(
+          new TrendForgeError(
+            "FFMPEG_SPAWN_ERROR",
+            `${toolName(command)} 启动失败：未找到可执行文件`,
+            { command, error: error.message, args },
+            500
+          )
+        );
+      });
+      child.on("close", (code) => {
+        const result = { command, args, stdout, stderr };
+        if (code === 0) resolve(result);
+        else reject(new TrendForgeError("FFMPEG_COMMAND_ERROR", `${command} 执行失败`, { code, ...result }, 500));
+      });
+    });
+  }
+
+  private async commandAvailable(command: string): Promise<boolean> {
+    if (command.includes("\\") || command.includes("/")) {
+      return access(command).then(() => true, () => false);
+    }
+    return this.run(command, ["-version"]).then(() => true, () => false);
+  }
+}
+
+function configuredPath(value: string | undefined, fallback: string): string {
+  const next = value?.trim();
+  return next && next !== "ffmpeg" && next !== "ffprobe" ? next : fallback;
+}
+
+function installerPath(packageName: string, fallback: string): string {
+  try {
+    const installer = requireInstaller(packageName) as { path?: unknown };
+    return typeof installer.path === "string" ? installer.path : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function toolName(command: string): string {
+  return command.toLowerCase().includes("probe") ? "FFprobe" : "FFmpeg";
+}
+
+function parseFps(value: string): number | undefined {
+  const [a, b] = value.split("/").map(Number);
+  if (!a) return undefined;
+  return b ? a / b : a;
+}
+
+function cropExpression(ratio: Ratio): string {
+  const target = ratio === "16:9" ? "16/9" : ratio === "1:1" ? "1/1" : ratio === "4:5" ? "4/5" : "9/16";
+  return `crop='if(gt(iw/ih,${target}),ih*${target},iw)':'if(gt(iw/ih,${target}),ih,iw/${target})'`;
+}

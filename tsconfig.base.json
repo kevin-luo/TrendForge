@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+    "baseUrl": ".",
+    "paths": {
+      "@trendforge/core": ["packages/core/src/index.ts"],
+      "@trendforge/connectors": ["packages/connectors/src/index.ts"],
+      "@trendforge/llm": ["packages/llm/src/index.ts"],
+      "@trendforge/tts": ["packages/tts/src/index.ts"],
+      "@trendforge/subtitles": ["packages/subtitles/src/index.ts"],
+      "@trendforge/ffmpeg": ["packages/ffmpeg/src/index.ts"],
+      "@trendforge/templates": ["packages/templates/src/index.ts"]
+    }
+  }
+}
