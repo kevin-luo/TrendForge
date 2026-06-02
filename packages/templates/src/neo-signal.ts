@@ -1,4 +1,4 @@
-import type { RenderPayload, TemplateDefinition } from "@trendforge/core";
+import type { RenderPayload, TemplateDefinition, TrendItem } from "@trendforge/core";
 
 export const neoSignalTemplate: TemplateDefinition = {
   id: "neo-signal",
@@ -21,6 +21,7 @@ export function renderNeoSignalHtml(payload: RenderPayload): string {
   const accent = String(payload.theme?.accent ?? neoSignalTemplate.defaultTheme.accent);
   const secondary = String(payload.theme?.secondary ?? neoSignalTemplate.defaultTheme.secondary);
   const isPortrait = payload.height > payload.width;
+  const boardItems = uniqueItems(scenes.flatMap((scene) => scene.items ?? [])).slice(0, 5);
   const sceneMarkup = scenes
     .map((scene, index) => {
       const item = scene.items?.[0];
@@ -39,6 +40,17 @@ export function renderNeoSignalHtml(payload: RenderPayload): string {
       ].filter(Boolean);
       const metrics = modelMetrics.length ? modelMetrics : meta;
       const bodyLines = splitDisplayText(scene.screenText, isPortrait && scene.type === "item" ? 2 : isPortrait ? 3 : 2);
+      const subtitleText = payload.subtitles?.[index]?.text ?? scene.voiceText;
+      const panelMarkup = scene.type === "item"
+        ? `<div class="product-panel ${thumbnail ? "has-image" : "fallback-panel"}">
+            ${thumbnail ? `<img src="${escapeAttr(thumbnail)}" alt="${escapeAttr(scene.title)}" crossorigin="anonymous" />` : `<div class="product-mark">${escapeHtml(initials(scene.title))}</div>`}
+            <div class="product-caption">
+              <span>#${rank}</span>
+              <strong>${escapeHtml(item?.title ?? scene.title)}</strong>
+              ${isPortrait && metrics.length ? `<em>${escapeHtml(metrics.slice(0, 2).join(" · "))}</em>` : ""}
+            </div>
+          </div>`
+        : renderSignalBoard(boardItems, scene.title);
       return `<section class="scene scene-${scene.type} layout-${layout} motion-${motion}" style="--i:${index}">
         <div class="hud-top">
           <span>TRENDFORGE / ${payload.composition}</span>
@@ -54,16 +66,9 @@ export function renderNeoSignalHtml(payload: RenderPayload): string {
             ${isPortrait && scene.type === "item" ? "" : `<div class="data-bar"><span style="width:${Math.min(96, Math.max(24, metric))}%"></span></div>`}
             ${metrics.length && !(isPortrait && scene.type === "item") ? `<div class="meta-row">${metrics.map((label) => `<span>${escapeHtml(label)}</span>`).join("")}</div>` : ""}
           </div>
-          <div class="product-panel ${thumbnail ? "has-image" : "fallback-panel"}">
-            ${thumbnail ? `<img src="${escapeAttr(thumbnail)}" alt="${escapeAttr(scene.title)}" crossorigin="anonymous" />` : `<div class="product-mark">${escapeHtml(initials(scene.title))}</div>`}
-            <div class="product-caption">
-              <span>${scene.type === "item" ? `#${rank}` : "TREND"}</span>
-              <strong>${escapeHtml(item?.title ?? scene.title)}</strong>
-              ${isPortrait && scene.type === "item" && metrics.length ? `<em>${escapeHtml(metrics.slice(0, 2).join(" · "))}</em>` : ""}
-            </div>
-          </div>
+          ${panelMarkup}
         </div>
-        <div class="subtitle-safe">${escapeHtml(truncateText(scene.voiceText, isPortrait && scene.type === "item" ? 54 : isPortrait ? 86 : 116))}</div>
+        <div class="subtitle-safe">${escapeHtml(truncateText(subtitleText, isPortrait && scene.type === "item" ? 54 : isPortrait ? 86 : 116))}</div>
       </section>`;
     })
     .join("\n");
@@ -174,6 +179,9 @@ export function renderNeoSignalHtml(payload: RenderPayload): string {
       height: ${payload.height > payload.width ? "420px" : "360px"};
       order: -1;
     }
+    .layout-image-top .signal-board {
+      order: -1;
+    }
     .layout-metric-focus .scene-layout {
       grid-template-columns: ${payload.height > payload.width ? "1fr" : "minmax(0, 1fr) 380px"};
     }
@@ -187,6 +195,26 @@ export function renderNeoSignalHtml(payload: RenderPayload): string {
     }
     .scene-item .product-panel {
       order: ${payload.height > payload.width ? "-1" : "0"};
+    }
+    .scene-cover .scene-layout {
+      margin-top: ${payload.height > payload.width ? "156px" : "150px"};
+      gap: ${payload.height > payload.width ? "24px" : "56px"};
+    }
+    .scene-cover .signal-board {
+      height: ${payload.height > payload.width ? "230px" : "360px"};
+    }
+    .scene-cover h1 {
+      font-size: ${payload.height > payload.width ? "48px" : "66px"};
+      line-height: 1.08;
+      word-break: keep-all;
+      overflow-wrap: break-word;
+    }
+    .scene-cover .screen-lines p {
+      font-size: ${payload.height > payload.width ? "24px" : "28px"};
+      line-height: 1.38;
+    }
+    .scene-cover .subtitle-safe {
+      display: none;
     }
     .kicker {
       color: var(--accent);
@@ -351,11 +379,78 @@ export function renderNeoSignalHtml(payload: RenderPayload): string {
       font-size: 15px;
       line-height: 1.25;
     }
+    .signal-board {
+      position: relative;
+      width: ${payload.height > payload.width ? "100%" : "420px"};
+      height: ${payload.height > payload.width ? "310px" : "520px"};
+      display: grid;
+      grid-template-columns: ${payload.height > payload.width ? "repeat(auto-fit, minmax(118px, 1fr))" : "1fr"};
+      gap: ${payload.height > payload.width ? "10px" : "14px"};
+      padding: ${payload.height > payload.width ? "24px" : "28px"};
+      border: 1px solid rgba(103, 232, 249, 0.22);
+      background: linear-gradient(145deg, rgba(8, 13, 24, 0.92), rgba(15, 23, 42, 0.74));
+      overflow: hidden;
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.34), inset 0 0 48px rgba(103, 232, 249, 0.08);
+      clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 22px 100%, 0 calc(100% - 22px));
+    }
+    .signal-card {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: ${payload.height > payload.width ? "1fr" : "68px minmax(0, 1fr)"};
+      align-items: center;
+      gap: 12px;
+      padding: ${payload.height > payload.width ? "8px" : "12px"};
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      background: rgba(2, 6, 23, 0.42);
+    }
+    .signal-thumb {
+      width: ${payload.height > payload.width ? "100%" : "68px"};
+      aspect-ratio: 1;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      border: 1px solid rgba(103, 232, 249, 0.2);
+      background: linear-gradient(135deg, rgba(103, 232, 249, 0.16), rgba(139, 92, 246, 0.16));
+      color: #EAFBFF;
+      font-size: ${payload.height > payload.width ? "18px" : "22px"};
+      font-weight: 800;
+    }
+    .signal-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .signal-card strong {
+      display: block;
+      color: #F8FAFC;
+      font-size: ${payload.height > payload.width ? "12px" : "18px"};
+      line-height: 1.2;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .signal-card span {
+      display: block;
+      margin-top: 6px;
+      color: var(--accent);
+      font-size: ${payload.height > payload.width ? "10px" : "13px"};
+    }
     .motion-push-in .product-panel { animation: panelPush 1.8s ease-out both; }
+    .motion-push-in .signal-board { animation: panelPush 1.8s ease-out both; }
     .motion-drift-left .product-panel { animation: driftLeft 2s ease-out both; }
+    .motion-drift-left .signal-board { animation: driftLeft 2s ease-out both; }
     .motion-drift-right .product-panel { animation: driftRight 2s ease-out both; }
+    .motion-drift-right .signal-board { animation: driftRight 2s ease-out both; }
     .motion-reveal-up .scene-body { animation: revealUp 1.2s ease-out both; }
     .motion-scanline .product-panel::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, transparent, rgba(103, 232, 249, 0.18), transparent);
+      transform: translateY(-100%);
+      animation: scan 2.4s ease-in-out both;
+    }
+    .motion-scanline .signal-board::after {
       content: "";
       position: absolute;
       inset: 0;
@@ -431,6 +526,31 @@ function escapeHtml(value: string): string {
       default:
         return "&#039;";
     }
+  });
+}
+
+function renderSignalBoard(items: TrendItem[], fallbackTitle: string): string {
+  const boardItems = items.length
+    ? items
+    : [{ id: "fallback", source: "trendforge", title: fallbackTitle, rank: 1, raw: {} }];
+  return `<div class="signal-board">
+    ${boardItems.slice(0, 5).map((item, index) => `<div class="signal-card">
+      <div class="signal-thumb">${item.thumbnail ? `<img src="${escapeAttr(item.thumbnail)}" alt="${escapeAttr(item.title)}" crossorigin="anonymous" />` : escapeHtml(initials(item.title))}</div>
+      <div>
+        <strong>${escapeHtml(item.title)}</strong>
+        <span>#${item.rank ?? index + 1}${item.score ? ` / ${item.score} upvotes` : ""}</span>
+      </div>
+    </div>`).join("")}
+  </div>`;
+}
+
+function uniqueItems(items: TrendItem[]): TrendItem[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = item.id || item.title;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
 }
 

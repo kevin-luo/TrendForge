@@ -46,8 +46,8 @@ type TabId = "content" | "script" | "voice" | "subtitles" | "cover" | "template"
 const tabs: Array<{ id: TabId; icon: typeof Database; zh: string; en: string }> = [
   { id: "content", icon: Database, zh: "内容", en: "Content" },
   { id: "script", icon: Wand2, zh: "脚本", en: "Script" },
-  { id: "voice", icon: AudioLines, zh: "配音", en: "Voice" },
   { id: "subtitles", icon: Captions, zh: "字幕", en: "Subtitles" },
+  { id: "voice", icon: AudioLines, zh: "配音", en: "Voice" },
   { id: "cover", icon: Image, zh: "封面", en: "Cover" },
   { id: "template", icon: Layers, zh: "模板", en: "Template" },
   { id: "export", icon: Download, zh: "导出", en: "Export" },
@@ -89,7 +89,7 @@ const copy = {
     sourceSaved: "热点内容已保存",
     scriptStarted: "脚本任务已启动",
     scriptSaved: "脚本已保存",
-    voiceStarted: "配音任务已启动",
+    voiceStarted: "可选配音任务已启动",
     subtitlesGenerated: "字幕已生成",
     subtitlesSaved: "字幕已保存",
     coverGenerated: "封面已生成",
@@ -127,7 +127,7 @@ const copy = {
     sourceSaved: "Content saved",
     scriptStarted: "Script job started",
     scriptSaved: "Script saved",
-    voiceStarted: "Voice job started",
+    voiceStarted: "Optional voice job started",
     subtitlesGenerated: "Subtitles generated",
     subtitlesSaved: "Subtitles saved",
     coverGenerated: "Cover generated",
@@ -449,9 +449,8 @@ export function App() {
                   push("success", c.scriptSaved);
                 } catch (error) { push("error", error instanceof Error ? error.message : String(error)); }
               }} />}
-              {activeTab === "voice" && <VoicePanel lang={lang} detail={detail} onGenerate={(options) => detail ? runJob(() => api.generateTts(detail.id, options), c.voiceStarted) : push("error", lang === "zh" ? "请先新建项目" : "Create a project first")} />}
               {activeTab === "subtitles" && <SubtitlePanel lang={lang} cues={cues} onGenerate={async () => {
-                if (!detail) { push("error", lang === "zh" ? "请先生成脚本和配音" : "Generate script and voice first"); return; }
+                if (!detail) { push("error", lang === "zh" ? "请先生成脚本" : "Generate a script first"); return; }
                 try {
                   await api.generateSubtitles(detail.id);
                   setDetail(await api.project(detail.id));
@@ -467,6 +466,7 @@ export function App() {
                   push("success", c.subtitlesSaved);
                 } catch (error) { push("error", error instanceof Error ? error.message : String(error)); }
               }} />}
+              {activeTab === "voice" && <VoicePanel lang={lang} detail={detail} onGenerate={(options) => detail ? runJob(() => api.generateTts(detail.id, options), c.voiceStarted) : push("error", lang === "zh" ? "请先新建项目" : "Create a project first")} />}
               {activeTab === "cover" && <CoverPanel lang={lang} detail={detail} onSaveScript={async (next) => {
                 if (!detail) return;
                 try {
@@ -548,8 +548,8 @@ function GuidePage(props: { lang: UiLang; onStart: () => void; onOpenTools: (tab
     { icon: <Rocket size={22} />, title: zh ? "① 新建项目" : "① New Project", desc: zh ? "点击左侧「新建视频项目」或在首页直接生成视频方案，系统会自动建立本地项目文件夹。" : "Click New Project in the sidebar or generate a plan from the Home page. A local project folder is created automatically." },
     { icon: <Database size={22} />, title: zh ? "② 采集内容" : "② Fetch Content", desc: zh ? "选择数据源（Hacker News、Product Hunt、RSS 或手动粘贴），点击「抓取并保存」把热点条目拉到项目里。没有 API Key 时，系统会用本地 mock 数据走通流程。" : "Choose a source (Hacker News, Product Hunt, RSS, or manual). Click Fetch. Missing API keys fall back to local mock data." },
     { icon: <Wand2 size={22} />, title: zh ? "③ 生成脚本" : "③ Generate Script", desc: zh ? "进入「脚本」标签，点击「生成脚本」。DeepSeek 会把热点条目变成可编辑的多场景脚本。没有 Key 时使用本地 mock 脚本生成器。" : "Open the Script tab and click Generate Script. DeepSeek turns trend items into editable scenes. Falls back to local mock." },
-    { icon: <AudioLines size={22} />, title: zh ? "④ 生成配音" : "④ Generate Voice", desc: zh ? "进入「配音」标签，点击「生成配音」。豆包 TTS 会根据脚本生成语音文件。没有配置时生成静音音频，保证后续流程可以继续。" : "Open the Voice tab and click Generate Voice. Doubao TTS synthesizes audio. Falls back to silent audio." },
-    { icon: <Captions size={22} />, title: zh ? "⑤ 生成字幕" : "⑤ Generate Subtitles", desc: zh ? "进入「字幕」标签，点击「生成字幕」。系统会根据配音时长自动对齐字幕时间线，支持 SRT / ASS / VTT 导出。" : "Open Subtitles and click Generate. Subtitles are aligned to audio timing. SRT / ASS / VTT export supported." },
+    { icon: <Captions size={22} />, title: zh ? "④ 生成字幕" : "④ Generate Subtitles", desc: zh ? "进入「字幕」标签，点击「生成字幕」。系统根据脚本文案创建时间轴，支持逐条编辑。" : "Open Subtitles and click Generate. The timeline is created from script text and can be edited cue by cue." },
+    { icon: <AudioLines size={22} />, title: zh ? "⑤ 配音（可选）" : "⑤ Voice (optional)", desc: zh ? "配置豆包后可以生成真实语音；跳过这一步也能导出图文字幕视频。" : "Doubao can create real voice audio. Skipping this step still exports the poster video with subtitles." },
     { icon: <Image size={22} />, title: zh ? "⑥ 导出封面（可选）" : "⑥ Export Cover (optional)", desc: zh ? "进入「封面」标签，编辑主标题和副标题，点击「导出封面」生成 SVG 封面文件。" : "Open Cover, edit the title and subtitle, then click Export Cover to generate an SVG cover file." },
     { icon: <Download size={22} />, title: zh ? "⑦ 渲染导出" : "⑦ Render & Export", desc: zh ? "进入「导出」标签，选择画幅比例（9:16 / 16:9 / 1:1 / 4:5）、帧率和格式，点击「渲染视频」。FFmpeg 会把视频、配音、字幕合成为本地 MP4 文件，完成后点「打开文件夹」查看输出。" : "Open Export, select ratio (9:16 / 16:9 / 1:1 / 4:5), FPS, and format. Click Render Video. FFmpeg merges video, audio, and subtitles into a local MP4. Click Open Folder to find the output." }
   ];
@@ -558,7 +558,7 @@ function GuidePage(props: { lang: UiLang; onStart: () => void; onOpenTools: (tab
       <div className="guide-hero">
         <BookOpen size={36} />
         <h2>{zh ? "快速上手 TrendForge" : "Getting Started with TrendForge"}</h2>
-        <p>{zh ? "按以下步骤完成你的第一个 AI 热点视频。所有 API Key 都是可选的，缺少配置时系统会用本地 mock 保证流程跑通。" : "Follow these steps to create your first AI trend video. All API keys are optional — local mocks keep the pipeline running."}</p>
+        <p>{zh ? "按以下步骤完成你的第一个 AI 热点视频。DeepSeek 用于真实脚本和画面方案，配音是可选步骤。" : "Follow these steps to create your first AI trend video. DeepSeek powers the script and visual plan. Voice is optional."}</p>
         <button className="primary-button guide-cta" onClick={props.onStart}><Rocket size={16} /> {zh ? "立即新建项目并开始" : "Create Project & Start Now"}</button>
       </div>
       <div className="guide-steps">
@@ -715,7 +715,7 @@ function HomeStudio(props: {
       </section>
 
       <div className="feature-strip">
-        <div><Wand2 size={18} /><strong>{zh ? "一键 AI 生成" : "AI generation"}</strong><span>{zh ? "自动完成脚本、配音、字幕、画面" : "Script, voice, subtitles, visuals"}</span></div>
+        <div><Wand2 size={18} /><strong>{zh ? "一键 AI 生成" : "AI generation"}</strong><span>{zh ? "脚本、字幕、图文画面；配音可选" : "Script, subtitles, visual posters; optional voice"}</span></div>
         <div><Layers size={18} /><strong>{zh ? "多方案备选" : "Multiple plans"}</strong><span>{zh ? "提供不同风格供你选择" : "Choose from distinct styles"}</span></div>
         <div><Monitor size={18} /><strong>{zh ? "可视化编辑" : "Visual editing"}</strong><span>{zh ? "进入工具箱继续精修" : "Polish in the toolbox"}</span></div>
         <div><Download size={18} /><strong>{zh ? "多格式导出" : "Multi-format export"}</strong><span>{zh ? "适配抖音、小红书、YouTube" : "Ready for social formats"}</span></div>
@@ -888,18 +888,18 @@ function VoicePanel(props: { lang: UiLang; detail?: ProjectDetail; onGenerate: (
   return (
     <div className="split-grid">
       <div className="work-panel">
-        <div className="section-title"><AudioLines size={18} /> {zh ? "配音控制台" : "Voice Console"}</div>
+        <div className="section-title"><AudioLines size={18} /> {zh ? "配音控制台（可选）" : "Voice Console (optional)"}</div>
         {!props.detail?.script && (
           <div className="inline-warn"><AlertCircle size={15} /> {zh ? "请先生成脚本，再生成配音。" : "Generate a script first, then generate voice."}</div>
         )}
         <div className="form-grid">
-          <label>{zh ? "服务" : "Provider"}<select><option>{zh ? "豆包 TTS / 静音回退" : "Doubao / Silent fallback"}</option></select></label>
+          <label>{zh ? "服务" : "Provider"}<select><option>{zh ? "豆包 TTS（配置后可用）" : "Doubao TTS (when configured)"}</option></select></label>
           <label>{zh ? "音色" : "Voice"}<input value={voice} onChange={(event) => setVoice(event.target.value)} /></label>
           <label>{zh ? "语速" : "Speed"}<input type="number" min="0.5" max="2" step="0.1" value={speed} onChange={(event) => setSpeed(Number(event.target.value))} /></label>
           <label>{zh ? "音量" : "Volume"}<input type="number" min="0" max="2" step="0.1" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /></label>
           <label>{zh ? "格式" : "Format"}<select value={format} onChange={(event) => setFormat(event.target.value)}><option value="wav">WAV</option><option value="mp3">MP3</option></select></label>
         </div>
-        <button className="primary-button" disabled={!props.detail?.script} onClick={() => props.onGenerate({ format, voice, speed, volume })}><Play size={16} /> {zh ? "生成配音" : "Generate Voice"}</button>
+        <button className="primary-button" disabled={!props.detail?.script} onClick={() => props.onGenerate({ format, voice, speed, volume })}><Play size={16} /> {zh ? "生成可选配音" : "Generate Optional Voice"}</button>
       </div>
       <div className="work-panel">
         <div className="section-title"><Clapperboard size={18} /> {zh ? "音频资产" : "Audio Asset"}</div>
@@ -909,7 +909,7 @@ function VoicePanel(props: { lang: UiLang; detail?: ProjectDetail; onGenerate: (
             <span className="output-ok"><CheckCircle2 size={14} /> {zh ? "配音已生成" : "Voice ready"}</span>
           </div>
         ) : (
-          <p className="muted">{zh ? "等待生成配音" : "Waiting for voice audio"}</p>
+          <p className="muted">{zh ? "配音可以跳过；导出会使用图文和字幕。" : "Voice can be skipped. Export uses visuals and subtitles."}</p>
         )}
       </div>
     </div>
@@ -943,7 +943,7 @@ function SubtitlePanel(props: { lang: UiLang; cues: SubtitleCue[]; onGenerate: (
             <textarea value={cue.text} onChange={(event) => setDraft(draft.map((item) => item.id === cue.id ? { ...item, text: event.target.value } : item))} />
           </div>
         ))}
-        {draft.length === 0 && <div className="empty-inline"><Captions size={24} /><strong>{zh ? "等待字幕生成" : "Waiting for subtitles"}</strong><p>{zh ? "先生成配音，再点「生成字幕」按配音时长自动对齐字幕时间轴。" : "Generate voice audio first, then click Generate to auto-align subtitle timing."}</p></div>}
+        {draft.length === 0 && <div className="empty-inline"><Captions size={24} /><strong>{zh ? "等待字幕生成" : "Waiting for subtitles"}</strong><p>{zh ? "先生成脚本，再点「生成字幕」创建时间轴；配音可以在字幕之后生成。" : "Generate a script, then click Generate to create the timeline. Voice can be generated after subtitles."}</p></div>}
       </div>
     </div>
   );

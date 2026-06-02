@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { access } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import path from "node:path";
 import { TrendForgeError, type Ratio, type Scene } from "@trendforge/core";
 import type { CommandResult, MediaInfo } from "./types.js";
 
@@ -267,37 +268,84 @@ export class FfmpegService {
       duration: Math.max(1, input.duration),
       frames: Math.max(1, Math.round(input.duration * fps))
     }));
-    const totalDuration = normalizedInputs.reduce((sum, input) => sum + input.duration, 0);
-    const filterParts = normalizedInputs.map((input, index) => {
-      const zoomExpr = index % 2 === 0
-        ? "min(1.055,1+0.00055*on)"
-        : "max(1.0,1.055-0.00045*on)";
-      const xExpr = index % 3 === 0 ? `(iw-ow)*on/${input.frames}` : "(iw-ow)/2";
-      const yExpr = index % 3 === 1 ? `(ih-oh)*on/${input.frames}` : "(ih-oh)/2";
-      return [
-        `[${index}:v]scale=${Math.ceil(width * 1.08)}:${Math.ceil(height * 1.08)}:force_original_aspect_ratio=increase,`,
-        `crop=${Math.ceil(width * 1.08)}:${Math.ceil(height * 1.08)},`,
-        `zoompan=z='${zoomExpr}':x='${xExpr}':y='${yExpr}':d=${input.frames}:fps=${fps}:s=${width}x${height},`,
-        `fade=t=in:st=0:d=0.28,fade=t=out:st=${Math.max(0.3, input.duration - 0.32).toFixed(2)}:d=0.28,`,
-        "format=yuv420p,setpts=PTS-STARTPTS",
-        `[v${index}]`
-      ].join("");
-    });
-    const concatInputs = normalizedInputs.map((_input, index) => `[v${index}]`).join("");
-    const filterComplex = `${filterParts.join(";")};${concatInputs}concat=n=${normalizedInputs.length}:v=1:a=0[outv]`;
+    const segmentDir = path.join(path.dirname(outputPath), "segments");
+    await mkdir(segmentDir, { recursive: true });
 
     const codecArgs = codec === "libvpx-vp9"
       ? ["-c:v", "libvpx-vp9", "-b:v", "2M", "-pix_fmt", "yuv420p"]
       : ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p"];
 
+    const segmentPaths: string[] = [];
+    for (const [index, input] of normalizedInputs.entries()) {
+      const segmentPath = path.join(segmentDir, `segment_${String(index).padStart(3, "0")}.${codec === "libvpx-vp9" ? "webm" : "mp4"}`);
+      const zoomExpr = index % 2 === 0
+        ? "min(1.06,1+0.00075*on)"
+        : "max(1.0,1.06-0.00055*on)";
+      const xExpr = index % 3 === 0 ? `(iw-ow)*on/${input.frames}` : "(iw-ow)/2";
+      const yExpr = index % 3 === 1 ? `(ih-oh)*on/${input.frames}` : "(ih-oh)/2";
+      const filter = [
+        `scale=${Math.ceil(width * 1.1)}:${Math.ceil(height * 1.1)}:force_original_aspect_ratio=increase,`,
+        `crop=${Math.ceil(width * 1.08)}:${Math.ceil(height * 1.08)},`,
+        `zoompan=z='${zoomExpr}':x='${xExpr}':y='${yExpr}':d=${input.frames}:fps=${fps}:s=${width}x${height},`,
+        "format=yuv420p,setpts=PTS-STARTPTS"
+      ].join("");
+      await this.run(this.ffmpegPath, [
+        "-y",
+        "-loop", "1",
+        "-framerate", String(fps),
+        "-t", input.duration.toFixed(3),
+        "-i", input.path,
+        "-vf", filter,
+        "-frames:v", String(input.frames),
+        "-r", String(fps),
+        ...codecArgs,
+        segmentPath
+      ]);
+      segmentPaths.push(segmentPath);
+    }
+
+    if (segmentPaths.length === 1) {
+      await this.run(this.ffmpegPath, ["-y", "-i", segmentPaths[0]!, "-c", "copy", outputPath]);
+      return outputPath;
+    }
+
+    const transition = Math.min(0.35, Math.max(0.12, Math.min(...normalizedInputs.map((input) => input.duration)) / 4));
+    const prepFilters = segmentPaths.map((_segmentPath, index) => `[${index}:v]setpts=PTS-STARTPTS,format=yuv420p[v${index}]`);
+    const xfadeFilters: string[] = [];
+    let previousLabel = "v0";
+    let accumulatedDuration = normalizedInputs[0]?.duration ?? 0;
+    for (let index = 1; index < segmentPaths.length; index++) {
+      const outputLabel = index === segmentPaths.length - 1 ? "outv" : `x${index}`;
+      const offset = Math.max(0, accumulatedDuration - index * transition);
+      xfadeFilters.push(`[${previousLabel}][v${index}]xfade=transition=fade:duration=${transition.toFixed(3)}:offset=${offset.toFixed(3)}[${outputLabel}]`);
+      previousLabel = outputLabel;
+      accumulatedDuration += normalizedInputs[index]?.duration ?? 0;
+    }
+
+    try {
+      await this.run(this.ffmpegPath, [
+        "-y",
+        ...segmentPaths.flatMap((segmentPath) => ["-i", segmentPath.replace(/\\/g, "/")]),
+        "-filter_complex", [...prepFilters, ...xfadeFilters].join(";"),
+        "-map", "[outv]",
+        "-r", String(fps),
+        ...codecArgs,
+        outputPath
+      ]);
+      return outputPath;
+    } catch {
+      // Some older FFmpeg builds can miss xfade. The concat path keeps export available.
+    }
+
+    const listPath = path.join(segmentDir, "concat.txt");
+    await writeFile(listPath, segmentPaths.map((segmentPath) => `file '${path.basename(segmentPath).replace(/'/g, "'\\''")}'`).join("\n"), "utf8");
+
     await this.run(this.ffmpegPath, [
       "-y",
-      ...normalizedInputs.flatMap((input) => ["-loop", "1", "-framerate", String(fps), "-t", input.duration.toFixed(3), "-i", input.path]),
-      "-filter_complex", filterComplex,
-      "-map", "[outv]",
-      "-r", String(fps),
-      "-t", totalDuration.toFixed(3),
-      ...codecArgs,
+      "-f", "concat",
+      "-safe", "0",
+      "-i", listPath.replace(/\\/g, "/"),
+      "-c", "copy",
       outputPath
     ]);
     return outputPath;

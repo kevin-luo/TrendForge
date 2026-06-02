@@ -2,8 +2,13 @@ import type { JobRow, LogRow, ProjectDetail, SourceInfo, SystemStatusMap } from 
 import type { ExportSettings, Language, ProjectRecord, Ratio, SubtitleCue, VideoScript } from "@trendforge/core";
 
 async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
+  const headers = options.body instanceof FormData
+    ? undefined
+    : options.body
+      ? { "Content-Type": "application/json" }
+      : undefined;
   const response = await fetch(url, {
-    headers: options.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
+    headers,
     ...options
   });
   if (!response.ok) {
@@ -36,7 +41,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ format: "wav", speed: 1, volume: 1, pitch: 1, ...options })
     }),
-  generateSubtitles: (projectId: string) => request<{ cues: SubtitleCue[] }>(`/api/projects/${projectId}/subtitles/generate`, { method: "POST" }),
+  generateSubtitles: (projectId: string) =>
+    request<{ cues: SubtitleCue[] }>(`/api/projects/${projectId}/subtitles/generate`, { method: "POST", body: JSON.stringify({}) }),
   saveSubtitles: (projectId: string, cues: SubtitleCue[]) => request<{ cues: SubtitleCue[] }>(`/api/projects/${projectId}/subtitles`, { method: "PATCH", body: JSON.stringify({ cues }) }),
   generateCover: (projectId: string) => request<{ path: string }>(`/api/projects/${projectId}/cover/generate`, { method: "POST" }),
   render: (projectId: string, settings: Partial<ExportSettings> & { ratio: Ratio }) =>

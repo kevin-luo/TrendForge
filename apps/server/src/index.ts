@@ -377,7 +377,8 @@ app.post("/api/projects/:id/render", async (request) => {
     const ratio = body.ratio ?? (project.ratio as Ratio);
     const size = body.width && body.height ? { width: body.width, height: body.height } : ratioToSize(ratio);
     const tts = await readTtsResult(id);
-    const cues = await latestCues(id);
+    const storedCues = await latestCues(id);
+    const cues = storedCues.length ? storedCues : generateSubtitlesFromScenes(script.scenes, tts);
 
     // Duration: TTS first, then sum of scene durations (default 6s/scene)
     const baseSceneDurations = script.scenes.map((scene) => scene.duration ?? 6);
