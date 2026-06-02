@@ -177,8 +177,8 @@ export function renderNeoSignalHtml(payload: RenderPayload): string {
       line-height: 1.42;
     }
     @keyframes scene {
-      0%, 100% { opacity: 0; transform: translateY(16px); }
-      4%, 92% { opacity: 1; transform: translateY(0); }
+      0%, 92% { opacity: 1; transform: translateY(0); }
+      100% { opacity: 0; transform: translateY(-12px); }
     }
     @keyframes grow {
       from { transform: scaleX(0.2); transform-origin: left; }

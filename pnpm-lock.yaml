@@ -84,6 +84,9 @@ importers:
       '@trendforge/llm':
         specifier: workspace:*
         version: link:../../packages/llm
+      '@trendforge/renderer':
+        specifier: workspace:*
+        version: link:../renderer
       '@trendforge/subtitles':
         specifier: workspace:*
         version: link:../../packages/subtitles

@@ -8,7 +8,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import puppeteer, { type Browser } from "puppeteer-core";
 
@@ -60,6 +60,7 @@ export async function renderFrames(opts: RenderFramesOptions): Promise<RenderFra
 
   const totalFrames = Math.max(1, Math.round(duration * fps));
   const frameDir = path.join(outputDir, "frames");
+  await rm(frameDir, { recursive: true, force: true });
   await mkdir(frameDir, { recursive: true });
 
   let browser: Browser | undefined;
@@ -85,8 +86,10 @@ export async function renderFrames(opts: RenderFramesOptions): Promise<RenderFra
     const fileUrl = `file:///${html.replace(/\\/g, "/")}`;
     await page.goto(fileUrl, { waitUntil: "load" });
 
-    // Give fonts/styles a moment to load
-    await page.evaluate(() => new Promise<void>((r) => setTimeout(r, 300)));
+    await page.evaluate(async () => {
+      await document.fonts?.ready;
+      await new Promise<void>((resolve) => setTimeout(resolve, 300));
+    });
 
     // Pause all animations at t=0
     await page.evaluate(() => {

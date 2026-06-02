@@ -22,6 +22,7 @@
     "@trendforge/core": "workspace:*",
     "@trendforge/ffmpeg": "workspace:*",
     "@trendforge/llm": "workspace:*",
+    "@trendforge/renderer": "workspace:*",
     "@trendforge/subtitles": "workspace:*",
     "@trendforge/templates": "workspace:*",
     "@trendforge/tts": "workspace:*",

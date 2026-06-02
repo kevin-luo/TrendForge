@@ -72,6 +72,27 @@ export class FfmpegService {
     return outputPath;
   }
 
+  async mergeAudioForExport(videoPath: string, audioPath: string, outputPath: string, format: "mp4" | "webm"): Promise<string> {
+    const audioCodecArgs = format === "webm" ? ["-c:a", "libopus", "-b:a", "128k"] : ["-c:a", "aac", "-b:a", "192k"];
+    await this.run(this.ffmpegPath, [
+      "-y",
+      "-i",
+      videoPath,
+      "-i",
+      audioPath,
+      "-c:v",
+      "copy",
+      ...audioCodecArgs,
+      "-map",
+      "0:v:0",
+      "-map",
+      "1:a:0",
+      "-shortest",
+      outputPath
+    ]);
+    return outputPath;
+  }
+
   async burnSubtitles(videoPath: string, subtitlePath: string, outputPath: string): Promise<string> {
     const escaped = subtitlePath.replace(/\\/g, "/").replace(/:/g, "\\:");
     await this.run(this.ffmpegPath, ["-y", "-i", videoPath, "-vf", `ass='${escaped}'`, "-c:a", "copy", outputPath]);
@@ -209,10 +230,11 @@ export class FfmpegService {
    * `frameGlob` must be an ffmpeg-style pattern like `/path/frames/frame_%06d.png`
    */
   async framesToVideo(frameGlob: string, fps: number, duration: number, outputPath: string, codec: "libx264" | "libvpx-vp9" = "libx264"): Promise<string> {
+    const inputPattern = frameGlob.replace(/\\/g, "/");
     const args = [
       "-y",
       "-framerate", String(fps),
-      "-i", frameGlob,
+      "-i", inputPattern,
       "-t", String(duration),
       "-c:v", codec,
       "-pix_fmt", "yuv420p",

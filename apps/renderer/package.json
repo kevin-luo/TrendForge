@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
+  "exports": {
+    ".": "./src/index.ts",
+    "./html-renderer": "./src/html-renderer.ts"
+  },
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",

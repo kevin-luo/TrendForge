@@ -20,6 +20,7 @@ import {
 } from "@trendforge/core";
 import { FfmpegService } from "@trendforge/ffmpeg";
 import { createScriptProvider } from "@trendforge/llm";
+import { renderFrames } from "@trendforge/renderer/html-renderer";
 import { exportAss, exportSrt, exportVtt, generateSubtitlesFromScenes } from "@trendforge/subtitles";
 import { renderNeoSignalHtml } from "@trendforge/templates";
 import { createTtsProvider } from "@trendforge/tts";
@@ -402,39 +403,34 @@ app.post("/api/projects/:id/render", async (request) => {
     const ext = body.format === "webm" ? "webm" : "mp4";
     const ffmpeg = await createFfmpegServiceFromSettings();
 
-    // ── Render: ffmpeg drawtext scene overlay ────────────────────────
-    await update(20, "合成视频画面");
-    const rawVideo = storage.projectPath(id, "exports", `raw.${ext}`);
-    await ffmpeg.renderSceneVideo({
-      scenes: script.scenes,
+    await update(20, "渲染模板帧");
+    const frames = await renderFrames({
+      html: htmlPath,
       width: size.width,
       height: size.height,
-      duration,
       fps,
-      outputPath: rawVideo,
-      codec: ext === "webm" ? "libvpx-vp9" : "libx264"
+      duration,
+      outputDir: storage.projectPath(id, "render"),
+      onProgress: async (written, total) => {
+        if (written === total || written % Math.max(1, Math.round(total / 12)) === 0) {
+          await update(20 + Math.round((written / total) * 48), `渲染模板帧 ${written}/${total}`);
+        }
+      }
     });
-    await update(60, "视频合成完成");
+
+    await update(70, "合成视频画面");
+    const rawVideo = storage.projectPath(id, "exports", `raw.${ext}`);
+    await ffmpeg.framesToVideo(frames.frameGlob, fps, duration, rawVideo, ext === "webm" ? "libvpx-vp9" : "libx264");
+    await update(76, "视频画面完成");
     let finalPath = rawVideo;
 
-    // ── Merge audio (optional — skip if no TTS configured) ──────────
     if (tts?.audioPath && existsSync(tts.audioPath)) {
-      await update(76, "合成配音");
+      await update(82, "合成配音");
       const withAudio = storage.projectPath(id, "exports", `with_audio.${ext}`);
-      await ffmpeg.mergeAudio(finalPath, tts.audioPath, withAudio);
+      await ffmpeg.mergeAudioForExport(finalPath, tts.audioPath, withAudio, ext);
       finalPath = withAudio;
     }
 
-    // ── Burn subtitles (optional) ───────────────────────────────────
-    const assPath = storage.projectPath(id, "subtitles", "subtitle.ass");
-    if (body.burnSubtitles && cues.length && existsSync(assPath)) {
-      await update(88, "烧录字幕");
-      const withSubs = storage.projectPath(id, "exports", `with_subs.${ext}`);
-      await ffmpeg.burnSubtitles(finalPath, assPath, withSubs);
-      finalPath = withSubs;
-    }
-
-    // ── Copy to final output path ───────────────────────────────────
     const outputPath = storage.projectPath(id, "exports", `final.${ext}`);
     if (finalPath !== outputPath) {
       await ffmpeg.run(ffmpeg.ffmpegBin, ["-y", "-i", finalPath, "-c", "copy", outputPath]);

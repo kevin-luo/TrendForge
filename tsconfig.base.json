@@ -23,7 +23,9 @@
       "@trendforge/tts": ["packages/tts/src/index.ts"],
       "@trendforge/subtitles": ["packages/subtitles/src/index.ts"],
       "@trendforge/ffmpeg": ["packages/ffmpeg/src/index.ts"],
-      "@trendforge/templates": ["packages/templates/src/index.ts"]
+      "@trendforge/templates": ["packages/templates/src/index.ts"],
+      "@trendforge/renderer": ["apps/renderer/src/index.ts"],
+      "@trendforge/renderer/html-renderer": ["apps/renderer/src/html-renderer.ts"]
     }
   }
 }
