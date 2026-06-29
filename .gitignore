@@ -10,9 +10,13 @@ tmp
 *.tsbuildinfo
 apps/server/prisma/dev.db
 apps/server/prisma/dev.db-journal
+apps/server/prisma/dev.db-shm
+apps/server/prisma/dev.db-wal
+f_*.png
 apps/server/qdb.mts
 dev.out.log
 dev.err.log
 dev.ps.log
 .playwright-mcp
 .idea
+.claude

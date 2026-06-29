@@ -1,6 +1,6 @@
 # TrendForge
 
-TrendForge 是一个本地优先的 AI 热点视频工作台。它把手动文本、Product Hunt、Hacker News、RSS、Reddit、X/Twitter 等来源整理为短视频脚本，生成配音、双语字幕、封面，并通过 HTML/CSS/JS 视频模板导出多比例视频。
+TrendForge 是一个本地优先的 AI 热点视频工作台。它把手动文本、Product Hunt、Hacker News、RSS、Reddit、X/Twitter 等来源整理为短视频分镜，生成配音、双语字幕、封面，并通过 html-film + Chrome seek + FFmpeg 导出多比例视频。
 
 ## Screenshots
 
@@ -19,7 +19,8 @@ TrendForge 是一个本地优先的 AI 热点视频工作台。它把手动文�
 - DeepSeek 脚本生成，缺少 API Key 时使用本地 mock provider
 - 火山引擎豆包 TTS，缺少配置时生成静音音频用于本地流程测试
 - SRT、ASS、VTT 字幕生成、解析、编辑、导出
-- Neo Signal HTML 视频模板
+- html-film 多镜头视频渲染，支持 B-roll 搜索词、快切转场、镜头运动和动态字幕
+- 图片链路：DeepSeek 搜索图片 URL -> 本地缓存 -> `IMAGE_PROVIDER=pollinations` 可选生图 -> 本地 SVG fallback
 - FFmpeg 视频合成、字幕烧录、裁切、缩放、音频替换
 - 本地任务系统，支持进度、日志、失败重试
 
@@ -28,15 +29,26 @@ TrendForge 是一个本地优先的 AI 热点视频工作台。它把手动文�
 ```text
 apps/web        React + Vite 工作台
 apps/server     Fastify API、Prisma、任务系统
-apps/renderer   HyperFrames 风格 HTML 渲染入口
+apps/renderer-remotion Remotion 历史兼容适配器
 packages/core   共享类型、状态、工具函数
 packages/connectors 数据源插件
 packages/llm    DeepSeek 与 mock 脚本生成
 packages/tts    Doubao 与 silent TTS
 packages/subtitles SRT/ASS/VTT 引擎
 packages/ffmpeg FFmpeg 封装
+packages/motion-core MotionGraph 类型、schema、安全区工具
+packages/motion-director Storyboard 到 VisualSceneSpec 的导演层
+packages/motion-presets 本地程序化 motion primitives
+packages/render-lint 渲染质量检查
 packages/templates Neo Signal 模板数据
 ```
+
+核心架构和开源规范：
+
+- [Core Architecture](docs/core-architecture.md)
+- [Code Standards](docs/code-standards.md)
+- [MotionGraph Architecture](docs/motiongraph-architecture.md)
+- [Contributing](CONTRIBUTING.md)
 
 ## 快速启动 / Quick Start
 
@@ -73,7 +85,8 @@ pnpm dev
 | DeepSeek | 使用本地 mock 脚本生成器，生成示例脚本 |
 | 豆包 TTS | 生成静音音频文件，保证后续字幕、渲染流程继续 |
 | Product Hunt / Reddit / X | 使用本地 mock 热点数据 |
-| FFmpeg | 系统状态页提示安装；字幕、脚本、封面等仍可正常使用 |
+| FFmpeg | 系统状态页提示安装；字幕、脚本、封面等资产仍会保存 |
+| 本地程序化视频引擎 | 本地生成画面、动效、字幕安全区、封面和 MP4，适合低成本矩阵批量生产 |
 
 ### FFmpeg 安装（可选）
 
@@ -146,18 +159,18 @@ FFMPEG_PATH=ffmpeg
 FFPROBE_PATH=ffprobe
 ```
 
-系统状态页会检测 FFmpeg、FFprobe、DeepSeek、Doubao、Product Hunt、Reddit、X/Twitter。
+系统状态页会检测 FFmpeg、FFprobe、DeepSeek、Doubao、本地程序化视频引擎、Product Hunt、Reddit、X/Twitter。
 
 ## First Video Project
 
 1. 在 Dashboard 创建项目。
 2. 在内容页选择手动输入、Hacker News、RSS 或 Product Hunt。
 3. 选择热点条目并保存。
-4. 在脚本页生成脚本，编辑每个场景。
+4. 在脚本页生成分镜，编辑每个场景。
 5. 在配音页生成配音，或上传本地音频替换。
 6. 在字幕页生成中英字幕并编辑时间轴。
 7. 在封面页调整标题、副标题和比例。
-8. 在模板页选择 Neo Signal 和主题参数。
+8. 在模板页选择 html-film 视觉风格和主题参数。
 9. 在导出页选择 9:16、16:9、1:1、4:5 或自定义尺寸并渲染。
 
 ## Manual Text To Video
@@ -209,7 +222,7 @@ Hacker News 使用公开 API。Product Hunt、Reddit、X/Twitter 需要本地 AP
 
 ### 哪些功能会联网？
 
-只有用户配置的 LLM、TTS、数据源 API 会访问外部网络。项目文件和 API Key 保存在本地。
+ 用户配置的 LLM、TTS、数据源 API 会访问外部网络。项目文件和 API Key 保存在本地。
 
 ## Development
 

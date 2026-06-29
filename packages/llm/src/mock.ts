@@ -36,7 +36,7 @@ export class MockScriptProvider implements ScriptProvider {
         duration: 7,
         title: "筛选逻辑",
         screenText: "看价值、看效率、看落地场景",
-        voiceText: "这不是单纯看热度，我们重点看三件事：用户痛点是否清楚，效率提升是否明显，落地场景是否真实。",
+        voiceText: "这条视频重点看三件事：用户痛点是否清楚，效率提升是否明显，落地场景是否真实。",
         voiceTextEn: "We focus on user pain, efficiency gains, and realistic workflows.",
         visualHint: "HUD checklist, subtle scan lines"
       }

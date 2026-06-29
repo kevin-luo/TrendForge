@@ -5,3 +5,5 @@ export * from "./rss.js";
 export * from "./product-hunt.js";
 export * from "./reddit.js";
 export * from "./x-twitter.js";
+
+export { DeepSeekSearchConnector } from './deepseek-search.js';

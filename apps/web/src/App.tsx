@@ -4,13 +4,17 @@ import {
   AlertCircle,
   AudioLines,
   BookOpen,
+  Bot,
+  Brain,
   Captions,
   CheckCircle2,
   ChevronRight,
   Clapperboard,
   Cog,
+  Cpu,
   Database,
   Download,
+  FileText,
   Film,
   FolderOpen,
   Gauge,
@@ -25,19 +29,24 @@ import {
   PencilLine,
   Play,
   Plus,
+  Radio,
   RefreshCw,
   Rocket,
   Save,
+  Share2,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Target,
   Wand2,
   Wrench,
-  X
+  X,
+  Zap
 } from "lucide-react";
-import type { Language, Ratio, SubtitleCue, VideoScript } from "@trendforge/core";
+import type { CreatorStyleAgent, Language, MatrixContentType, MatrixPlatform, Ratio, SourceType, SubtitleCue, VideoScript } from "@trendforge/core";
+import type { MotionTemplateManifest } from "@trendforge/motion-core";
 import { api } from "./api";
-import type { JobRow, LogRow, ProjectDetail, SourceInfo, SystemStatusMap } from "./types";
+import type { ExportProfileChoice, ExportSubmissionSettings, JobRow, LogRow, MotionTemplateRegistry, ProjectDetail, RenderQualityReport, SourceInfo, SystemStatusMap } from "./types";
 
 type UiLang = "zh" | "en";
 type ViewId = "studio" | "history" | "tools" | "templates" | "settings" | "guide";
@@ -54,13 +63,12 @@ const tabs: Array<{ id: TabId; icon: typeof Database; zh: string; en: string }> 
   { id: "logs", icon: Activity, zh: "日志", en: "Logs" }
 ];
 
+// Simplified nav: the home composer is the product. Advanced editing stays in
+// the tools workspace so the home flow stays focused.
 const navItems: Array<{ id: ViewId; icon: typeof Gauge; zh: string; en: string }> = [
   { id: "studio", icon: Home, zh: "首页", en: "Home" },
   { id: "history", icon: History, zh: "历史项目", en: "History" },
-  { id: "tools", icon: Wrench, zh: "视频工具箱", en: "Toolbox" },
-  { id: "templates", icon: PackageOpen, zh: "模板中心", en: "Templates" },
-  { id: "settings", icon: Cog, zh: "设置", en: "Settings" },
-  { id: "guide", icon: BookOpen, zh: "使用引导", en: "Guide" }
+  { id: "settings", icon: Cog, zh: "设置", en: "Settings" }
 ];
 
 const copy = {
@@ -71,11 +79,11 @@ const copy = {
     viewAll: "查看全部",
     ready: "系统就绪",
     refresh: "刷新",
-    studioEyebrow: "输入主题或选择数据源，AI 将为你生成多个视频方案",
-    commandDeck: "用 AI，把热点变成视频",
+    studioEyebrow: "一行输入，一次生成，一条结果",
+    commandDeck: "Prompt to Promo",
     systemOverview: "系统状态",
-    previewTitle: "等待脚本生成",
-    previewDesc: "选择内容来源后生成可编辑视频脚本",
+    previewTitle: "Live preview",
+    previewDesc: "脚本就绪后，画面在这里展开",
     timeline: "场景时间线",
     timelineEmpty: "脚本生成后显示场景时长",
     currentTask: "当前任务",
@@ -99,7 +107,7 @@ const copy = {
     language: "界面语言",
     outputFile: "输出文件",
     openFolder: "打开文件夹",
-    noOutput: "尚未渲染，点击渲染视频后输出到本地",
+    noOutput: "final.mp4 会在导出后显示在这里",
     renderDone: "渲染完成！",
   },
   en: {
@@ -109,11 +117,11 @@ const copy = {
     viewAll: "View all",
     ready: "System ready",
     refresh: "Refresh",
-    studioEyebrow: "Enter a topic or choose a source. AI generates multiple video plans.",
-    commandDeck: "Turn Trends into Video with AI",
+    studioEyebrow: "One input. One action. One result.",
+    commandDeck: "Prompt to Promo",
     systemOverview: "System Status",
-    previewTitle: "Waiting for script",
-    previewDesc: "Fetch content, then generate an editable video script",
+    previewTitle: "Live preview",
+    previewDesc: "The stage opens once the script is ready",
     timeline: "Scene Timeline",
     timelineEmpty: "Scenes appear after script generation",
     currentTask: "Current Task",
@@ -137,7 +145,7 @@ const copy = {
     language: "Language",
     outputFile: "Output File",
     openFolder: "Open Folder",
-    noOutput: "Not rendered yet. Click Render Video to export.",
+    noOutput: "final.mp4 appears here after export",
     renderDone: "Render complete!",
   }
 } as const;
@@ -164,8 +172,11 @@ export function App() {
   const [sources, setSources] = useState<SourceInfo[]>([]);
   const [status, setStatus] = useState<SystemStatusMap>({});
   const [settings, setSettings] = useState<Record<string, string | undefined>>({});
+  const [motionRegistry, setMotionRegistry] = useState<MotionTemplateRegistry>();
+  const [renderQuality, setRenderQuality] = useState<RenderQualityReport | null>(null);
   const [logs, setLogs] = useState<LogRow[]>([]);
   const [activeTab, setActiveTab] = useState<TabId>("content");
+  const [homeStatusExpanded, setHomeStatusExpanded] = useState(false);
   const [job, setJob] = useState<JobRow>();
   const [message, setMessage] = useState<string>(copy.zh.ready);
   const { toasts, push } = useToast();
@@ -173,11 +184,18 @@ export function App() {
   const c = copy[lang];
 
   async function refresh(nextSelectedId = selectedId) {
-    const [projectRows, sourceRows, statusRows, settingRows] = await Promise.all([api.projects(), api.sources(), api.status(), api.settings()]);
+    const [projectRows, sourceRows, statusRows, settingRows, registryRows] = await Promise.all([
+      api.projects(),
+      api.sources(),
+      api.status(),
+      api.settings(),
+      api.motionTemplates()
+    ]);
     setProjects(projectRows as ProjectDetail[]);
     setSources(sourceRows);
     setStatus(statusRows);
     setSettings(settingRows);
+    setMotionRegistry(registryRows);
     const nextId = nextSelectedId ?? projectRows[0]?.id;
     if (nextId) {
       setSelectedId(nextId);
@@ -190,6 +208,28 @@ export function App() {
   useEffect(() => {
     void refresh().catch((error) => setMessage(error.message));
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    if (!detail?.id) {
+      setRenderQuality(null);
+      return () => {
+        active = false;
+      };
+    }
+    setRenderQuality(null);
+    void api.renderQuality(detail.id).then((report) => {
+      if (active) setRenderQuality(report);
+    }).catch((error) => {
+      if (active) setRenderQuality(null);
+      if (error instanceof Error) {
+        setMessage(error.message);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [detail?.id, detail?.updatedAt]);
 
   useEffect(() => {
     if (!job || job.status === "success" || job.status === "failed" || job.status === "canceled") {
@@ -212,10 +252,7 @@ export function App() {
   }, [job?.id, job?.status, detail?.id]);
 
   async function createProject() {
-    const project = await api.createProject(lang === "zh" ? "今日 AI 产品信号" : "Today AI Product Signals", "9:16");
-    setSelectedId(project.id);
-    setView("studio");
-    setActiveTab("content");
+    const project = await createAndSelectProject(lang === "zh" ? "今日 AI 产品信号" : "Today AI Product Signals", "9:16");
     setMessage(c.projectCreated);
     push("success", c.projectCreated);
     await refresh(project.id);
@@ -261,36 +298,46 @@ export function App() {
     setView("tools");
   }
 
-  async function generateVideoPlan(options: {
+
+  async function extractCreatorStyle(options: { name?: string; niche?: string; language: Language; sampleText: string }) {
+    let project = detail;
+    if (!project) {
+      project = await api.createProject(lang === "zh" ? "创作者风格样本" : "Creator style sample", "9:16");
+      setSelectedId(project.id);
+    }
+    const result = await api.extractCreatorStyle(project.id, options);
+    setDetail(await api.project(project.id));
+    setLogs(await api.logs(project.id));
+    push("success", lang === "zh" ? "创作者风格 agent 已生成" : "Creator style agent generated");
+    return result.agent;
+  }
+
+  async function generatePromoVideo(options: {
     prompt: string;
-    source: string;
+    source: SourceType;
+    contentType: MatrixContentType | "auto";
+    persona?: string;
+    platform: MatrixPlatform;
     ratio: Ratio;
     language: Language;
-    limit: number;
-    mode: string;
-    style: string;
+    date?: string;
+    topCount?: number;
+    rssUrl?: string;
+    renderCandidates?: number;
+    styleName?: string;
+    styleNiche?: string;
+    styleSampleText?: string;
+    styleAgent?: CreatorStyleAgent;
   }) {
     try {
-      let project = detail;
-      if (!project) {
-        project = await api.createProject(lang === "zh" ? "今日 AI 产品信号" : "Today AI Product Signals", options.ratio);
-        setSelectedId(project.id);
-      } else if (project.ratio !== options.ratio) {
-        project = await api.patchProject(project.id, { ratio: options.ratio });
-      }
-      setDetail(project);
-      push("info", lang === "zh" ? "正在采集内容…" : "Fetching content…");
-      await api.fetchSource(project.id, options.source, {
-        manualText: options.prompt,
-        limit: options.limit,
-        mode: options.mode,
-        style: options.style
-      });
-      setMessage(c.sourceSaved);
-      const next = await api.generateScript(project.id, options.language);
+      const projectTitle = titleFromPrompt(options.prompt, lang);
+      const project = await createAndSelectProject(projectTitle, options.ratio);
+      push("info", lang === "zh" ? "正在生成宣传视频…" : "Generating promo video…");
+      const next = await api.generatePromoVideo(project.id, options);
       setJob(next);
-      setMessage(c.scriptStarted);
-      push("info", c.scriptStarted);
+      const nextMessage = lang === "zh" ? "宣传视频任务已启动" : "Promo video job started";
+      setMessage(nextMessage);
+      push("info", nextMessage);
       setSelectedId(project.id);
       setView("studio");
       setDetail(await api.project(project.id));
@@ -302,8 +349,32 @@ export function App() {
     }
   }
 
+  async function createAndSelectProject(title: string, ratio: Ratio) {
+    const project = await api.createProject(title, ratio);
+    setSelectedId(project.id);
+    setView("studio");
+    setActiveTab("content");
+    setJob(undefined);
+    setDetail(await api.project(project.id));
+    setLogs(await api.logs(project.id));
+    return project;
+  }
+
   const currentRatio = (detail?.ratio ?? "9:16") as Ratio;
   const script = detail?.script;
+  const visibleStatus = useMemo(() => {
+    const values = Object.values(status);
+    if (view !== "studio") return values;
+    const priority = ["html-film-renderer", "ffmpeg-export", "deepseek-script-engine"];
+    const prioritized = priority.flatMap((id) => {
+      const item = values.find((entry) => entry.id === id);
+      return item ? [item] : [];
+    });
+    const rest = values.filter((entry) => !priority.includes(entry.id));
+    const merged = [...prioritized, ...rest];
+    return homeStatusExpanded ? merged : merged.slice(0, 4);
+  }, [homeStatusExpanded, status, view]);
+  const hiddenStatusCount = view === "studio" ? Math.max(0, Object.values(status).length - visibleStatus.length) : 0;
   const cues = useMemo(() => {
     const row = detail?.subtitles?.find((item) => item.format === "srt");
     return row?.cues_json ? (JSON.parse(row.cues_json) as SubtitleCue[]) : [];
@@ -312,7 +383,7 @@ export function App() {
   const outputPath = detail?.status === "exported" ? detail?.finalVideoPath : undefined;
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${view === "studio" ? "home-shell" : ""}`}>
       <aside className="sidebar">
         <div className="brand-block">
           <div className="brand-mark">TF</div>
@@ -371,29 +442,48 @@ export function App() {
               <RefreshCw size={16} />
               {c.refresh}
             </button>
+            <button className="ghost-button" onClick={() => setView("settings")}>
+              <Cog size={16} />
+              {lang === "zh" ? "设置" : "Settings"}
+            </button>
             <div className="status-pill">{message}</div>
           </div>
         </header>
 
         <section className="dashboard-strip" aria-label={c.systemOverview}>
-          {Object.values(status).map((item) => (
+          {visibleStatus.map((item) => (
             <div key={item.id} className={`system-cell ${item.status}`}>
               <span>{serviceLabel(item.label, lang)}</span>
               <strong>{compactStatus(item.message, lang)}</strong>
             </div>
           ))}
+          {view === "studio" && Object.values(status).length > visibleStatus.length && (
+            <button
+              type="button"
+              className="system-cell system-toggle"
+              aria-expanded={homeStatusExpanded}
+              onClick={() => setHomeStatusExpanded((value) => !value)}
+            >
+              <span>{homeStatusExpanded ? (lang === "zh" ? "收起状态" : "Collapse") : (lang === "zh" ? "更多状态" : "More status")}</span>
+              <strong>{homeStatusExpanded ? "−" : `+${hiddenStatusCount}`}</strong>
+            </button>
+          )}
         </section>
 
         {view === "studio" && (
           <HomeStudio
             lang={lang}
             detail={detail}
+            registry={motionRegistry}
             sources={sources}
             status={status}
             job={job}
-            onGenerate={generateVideoPlan}
+            renderQuality={renderQuality}
+            onGenerate={generatePromoVideo}
+            onExtractStyle={extractCreatorStyle}
             onOpenTools={openTools}
             onOpenSettings={() => setView("settings")}
+            onOpenFolder={async (path) => { try { await api.openFolder(path); } catch { /* ignore */ } }}
             onRender={(settings) => detail && runJob(() => api.render(detail.id, settings), c.renderStarted)}
             onPreview={() => detail && window.open(api.previewUrl(detail.id), "_blank")}
           />
@@ -483,13 +573,14 @@ export function App() {
                   push("success", c.coverGenerated);
                 } catch (error) { push("error", error instanceof Error ? error.message : String(error)); }
               }} />}
-              {activeTab === "template" && <TemplatePanel lang={lang} detail={detail} onSelect={selectTemplate} />}
+              {activeTab === "template" && <TemplatePanel lang={lang} registry={motionRegistry} detail={detail} onSelect={selectTemplate} />}
               {activeTab === "export" && (
                 <ExportPanel
                   lang={lang}
                   ratio={currentRatio}
                   job={job}
                   outputPath={outputPath}
+                  qualityReport={renderQuality}
                   onRender={(settings) => detail ? runJob(() => api.render(detail.id, settings), c.renderStarted) : push("error", lang === "zh" ? "请先新建项目" : "Create a project first")}
                   onOpenFolder={async (p) => { try { await api.openFolder(p); } catch { /* ignore */ } }}
                 />
@@ -500,13 +591,12 @@ export function App() {
         )}
 
         {view === "history" && <HistoryPage lang={lang} projects={projects} selectedId={selectedId} onSelect={selectProject} />}
-        {view === "templates" && <TemplateLibraryPage lang={lang} detail={detail} onSelect={selectTemplate} />}
+        {view === "templates" && <TemplateLibraryPage lang={lang} registry={motionRegistry} detail={detail} onSelect={selectTemplate} />}
         {view === "settings" && <SettingsPage lang={lang} settings={settings} onSave={saveSettings} />}
         {view === "guide" && <GuidePage lang={lang} onStart={() => { setView("studio"); createProject(); }} onOpenTools={openTools} />}
       </main>
 
-      {/* Right-side Inspector — always visible */}
-      <Inspector lang={lang} detail={detail} script={script} job={job} logs={logs} />
+      {view === "tools" && <Inspector lang={lang} detail={detail} script={script} job={job} logs={logs} />}
 
       {/* Bottom log footer */}
       <footer className="bottom-log">
@@ -586,141 +676,278 @@ function GuidePage(props: { lang: UiLang; onStart: () => void; onOpenTools: (tab
 function HomeStudio(props: {
   lang: UiLang;
   detail?: ProjectDetail;
+  registry?: MotionTemplateRegistry;
   sources: SourceInfo[];
   status: SystemStatusMap;
   job?: JobRow;
-  onGenerate: (options: { prompt: string; source: string; ratio: Ratio; language: Language; limit: number; mode: string; style: string }) => Promise<void>;
+  renderQuality: RenderQualityReport | null;
+  onGenerate: (options: {
+    prompt: string;
+    source: SourceType;
+    contentType: MatrixContentType | "auto";
+    persona?: string;
+    platform: MatrixPlatform;
+    ratio: Ratio;
+    language: Language;
+    date?: string;
+    topCount?: number;
+    rssUrl?: string;
+    renderCandidates?: number;
+    styleName?: string;
+    styleNiche?: string;
+    styleSampleText?: string;
+    styleAgent?: CreatorStyleAgent;
+  }) => Promise<void>;
+  onExtractStyle: (options: { name?: string; niche?: string; language: Language; sampleText: string }) => Promise<CreatorStyleAgent>;
   onOpenTools: (tab: TabId) => void;
   onOpenSettings: () => void;
-  onRender: (settings: { ratio: Ratio; fps: 24 | 30 | 60; format: "mp4" | "webm"; burnSubtitles: boolean }) => void | Promise<void>;
+  onOpenFolder: (path: string) => Promise<void>;
+  onRender: (settings: ExportSubmissionSettings) => void | Promise<void>;
   onPreview: () => void;
 }) {
   const zh = props.lang === "zh";
-  const [prompt, setPrompt] = useState("整理今天 Product Hunt 上最值得看的 5 个 AI 产品，做成 60 秒的竖版视频，科技风格");
-  const [source, setSource] = useState("product-hunt");
   const [ratio, setRatio] = useState<Ratio>("9:16");
-  const [duration, setDuration] = useState("60 秒左右");
-  const [style, setStyle] = useState("科技 / 未来感");
+  const [prompt, setPrompt] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
-  const exportStatus = props.status.ffmpegExport;
-  const isRenderingReady = exportStatus?.status === "ready";
+  const [previewNonce, setPreviewNonce] = useState(0);
+
   const script = props.detail?.script;
-  const trendCount = props.detail?.trendItems?.length ?? 0;
-  const plans = buildPlanCards(props.detail, props.lang);
+  const hasScript = Boolean(script);
+  const running = props.job?.status === "running" || props.job?.status === "pending";
+  const busy = isGenerating || running;
+  const outputPath = props.detail?.status === "exported" ? props.detail.finalVideoPath : undefined;
+  const outputFileUrl = props.detail?.status === "exported" && props.detail?.id ? api.exportVideoUrl(props.detail.id) : undefined;
+  const outputFileName = outputPath ? fileNameFromPath(outputPath) : undefined;
+  const projectStatus = projectStatusLabel(props.detail?.status ?? "draft", props.lang);
+  const jobProgress = props.job?.progress ?? 0;
+  const renderCoverage = props.renderQuality?.sceneSpecs.imageCoverage ?? 0;
+  const renderImageScenes = props.renderQuality?.sceneSpecs.imageSceneCount ?? 0;
+  const renderSceneCount = props.renderQuality?.sceneSpecs.sceneCount ?? 0;
+  const clampedTextCount = props.renderQuality?.textFitSummary?.clampedTextCount ?? 0;
+
+  // Live preview === export (same makeFilmHtml). Reload the iframe when a job finishes.
+  useEffect(() => {
+    if (props.job?.status === "success") setPreviewNonce((value) => value + 1);
+  }, [props.job?.status]);
+  const previewSrc = props.detail ? `/api/projects/${props.detail.id}/preview?v=${previewNonce}` : undefined;
+
+  const ratios: Ratio[] = ["9:16", "16:9", "1:1", "4:5"];
+  const samples = zh
+    ? [
+        "为我的 AI 简历工具做一条 30 秒竖屏宣传片，突出一键生成和海量模板",
+        "介绍一款主打专注的极简待办 App，清新治愈风格",
+        "给一家精品手冲咖啡店做开业宣传，温暖质感"
+      ]
+    : [
+        "A 30s vertical promo for my AI resume tool — one-click generation, rich templates",
+        "Introduce a minimalist focus-first to-do app, calm and clean",
+        "Opening promo for a specialty pour-over coffee shop, warm and cozy"
+      ];
 
   async function handleGenerate() {
+    if (!prompt.trim() || busy) return;
     setIsGenerating(true);
     try {
-      await props.onGenerate({ prompt, source, ratio, language: props.lang as Language, limit: 5, mode: "topstories", style });
+      await props.onGenerate({
+        prompt: prompt.trim(),
+        source: "manual",
+        contentType: "auto",
+        platform: "douyin",
+        ratio,
+        language: zh ? "zh" : "en",
+        topCount: 5
+      });
     } finally {
       setIsGenerating(false);
     }
   }
 
+  async function handlePrimaryAction() {
+    if (busy) return;
+    if (hasScript) {
+      await props.onRender({ ratio, fps: 30, format: "mp4", burnSubtitles: false });
+      return;
+    }
+    await handleGenerate();
+  }
+
+  const showPreview = hasScript && !busy && Boolean(previewSrc);
+  const primaryLabel = busy ? (zh ? "处理中" : "Working") : hasScript ? (zh ? "渲染并导出" : "Render & export") : (zh ? "生成视频" : "Generate video");
+  const primaryIcon = busy ? <span className="spinner" /> : hasScript ? <Download size={16} /> : <Zap size={16} />;
+
   return (
-    <section className="home-studio">
-      <div className="hero-copy">
-        <h1>{zh ? "用 AI，把热点变成视频" : "Turn Trends into Video with AI"}</h1>
-        <p>{zh ? "输入主题或选择数据源，AI 将为你生成多个视频方案。" : "Enter a topic or choose a source. AI generates multiple video plans."}</p>
-      </div>
+    <section className="promo-studio">
+      <section className="promo-left forge-command">
+        <header className="promo-hero">
+          <span className="promo-kicker"><Sparkles size={14} /> TrendForge</span>
+          <h1>{props.lang === "zh" ? "Prompt to Promo" : "Prompt to Promo"}</h1>
+          <p>{zh ? "单一 prompt 驱动脚本、预览和导出，首页只保留最关键的操作。" : "One prompt drives script, preview, and export from a single control surface."}</p>
+        </header>
 
-      <section className="generator-panel">
-        <div className="step-title">
-          <span>1</span>
-          <strong>{zh ? "告诉 AI 你想做什么视频" : "Tell AI what to make"}</strong>
-        </div>
-        <textarea className="prompt-box" value={prompt} maxLength={500} onChange={(event) => setPrompt(event.target.value)} />
-        <div className="prompt-count">{prompt.length}/500</div>
-
-        <div className="field-group">
-          <span>{zh ? "数据源" : "Source"}</span>
-          <div className="source-pills">
-            {props.sources.map((item) => (
-              <button key={item.id} className={source === item.id ? "selected" : ""} onClick={() => setSource(item.id)}>
-                {sourceIcon(item.id)}
-                {sourceLabel(item.id, props.lang)}
-              </button>
-            ))}
+        <div className="composer">
+          <div className="composer-head">
+            <span>{zh ? "单一 prompt" : "Single prompt"}</span>
+            <span className="composer-shortcut">{zh ? "⌘ / Ctrl + Enter 直接执行" : "⌘ / Ctrl + Enter to run"}</span>
           </div>
-        </div>
-
-        <div className="quick-controls">
-          <label>{zh ? "视频类型" : "Type"}<select><option>{zh ? "热点榜单" : "Trend list"}</option><option>{zh ? "单条解读" : "Single story"}</option></select></label>
-          <label>{zh ? "语言" : "Language"}<select value={props.lang} disabled><option value="zh">中文（双语字幕）</option><option value="en">English</option></select></label>
-          <label>{zh ? "比例" : "Ratio"}<select value={ratio} onChange={(event) => setRatio(event.target.value as Ratio)}><option value="9:16">9:16 竖屏</option><option value="16:9">16:9 横屏</option><option value="1:1">1:1 方形</option><option value="4:5">4:5 社媒</option></select></label>
-          <label>{zh ? "时长" : "Duration"}<select value={duration} onChange={(event) => setDuration(event.target.value)}><option>60 秒左右</option><option>45 秒左右</option><option>90 秒左右</option></select></label>
-          <label>{zh ? "风格" : "Style"}<select value={style} onChange={(event) => setStyle(event.target.value)}><option>科技 / 未来感</option><option>极简榜单风</option><option>产品解说风</option></select></label>
-        </div>
-
-        <div className="generator-action">
-          <button className={`generate-button ${isGenerating ? "loading" : ""}`} disabled={isGenerating} onClick={handleGenerate}>
-            {isGenerating ? <span className="spinner" /> : <Sparkles size={18} />}
-            {isGenerating ? (zh ? "生成中…" : "Generating…") : (zh ? "生成视频方案" : "Generate plans")}
-          </button>
-          <span>{props.job && props.job.status === "running" ? `${jobTypeLabel(props.job.type, props.lang)} ${props.job.progress}%` : zh ? "预计 2-3 分钟完成" : "Usually done in 2-3 minutes"}</span>
-        </div>
-      </section>
-
-      <section className="plans-section">
-        <div className="section-line">
-          <div className="step-title">
-            <span>2</span>
-            <strong>{zh ? "选择你喜欢的方案" : "Choose a plan"}</strong>
+          <textarea
+            className="composer-input"
+            rows={3}
+            value={prompt}
+            maxLength={500}
+            placeholder={zh ? "例如：为我的 AI 简历工具做一条 30 秒竖屏宣传片，突出一键生成和海量模板…" : "e.g. A 30s vertical promo for my AI resume tool, highlight one-click generation…"}
+            onChange={(event) => setPrompt(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void handlePrimaryAction(); }}
+          />
+          <div className="composer-bar">
+            <div className="ratio-chips">
+              {ratios.map((r) => (
+                <button key={r} type="button" className={ratio === r ? "active" : ""} onClick={() => setRatio(r)}>{r}</button>
+              ))}
+            </div>
+            <button className="send-btn" disabled={busy || (!hasScript && !prompt.trim())} onClick={() => void handlePrimaryAction()}>
+              {busy ? <><span className="spinner" /> {jobProgress}%</> : <>{primaryIcon} {primaryLabel}</>}
+            </button>
           </div>
-          <button className="text-button" onClick={() => props.onOpenTools("script")}><RefreshCw size={15} /> {zh ? "重新生成方案" : "Regenerate"}</button>
+          <p className="composer-footnote">
+            {busy
+              ? (props.job?.step ?? (zh ? "处理中" : "Working"))
+              : hasScript
+                ? (zh ? "已有脚本，主按钮直接进入渲染导出。" : "Script ready. The main button jumps straight into render and export.")
+                : (zh ? "输入一句话后开始生成，比例先定，结果会写入右侧舞台。" : "Type one prompt to start. Set the ratio, then watch the stage on the right.")
+            }
+          </p>
         </div>
-        <p className="section-hint">
-          {script ? (zh ? `已生成 ${plans.length} 个视频方案，采集 ${trendCount} 条热点。` : `${plans.length} plans generated from ${trendCount} items.`) : (zh ? "生成后可预览、编辑并导出。" : "Generated plans can be previewed, edited, and exported.")}
-        </p>
-        <div className="plan-grid">
-          {plans.map((plan, index) => (
-            <article className="plan-card" key={plan.id}>
-              <div className={`plan-badge badge-${index}`}>{zh ? `方案 ${String.fromCharCode(65 + index)}` : `Plan ${String.fromCharCode(65 + index)}`}</div>
-              <div className="plan-cover">
-                <div className="cover-grid" />
-                <div className="cover-title">
-                  <strong>{plan.title}</strong>
-                  <span>{plan.subtitle}</span>
-                </div>
-                <button className="play-button" title={zh ? "预览视频模板" : "Preview video template"} onClick={props.onPreview}><Play size={22} fill="currentColor" /></button>
-                <small>{plan.time}</small>
-              </div>
-              <div className="plan-tags">
-                {plan.tags.map((tag) => <span key={tag}>{tag}</span>)}
-              </div>
-              <div className="plan-meta">
-                <span>{plan.duration}</span>
-                <span>{plan.created}</span>
-                <button aria-label={zh ? "更多操作" : "More actions"}><MoreVertical size={18} /></button>
-              </div>
-              <div className="plan-actions">
-                <button onClick={props.onPreview} title={zh ? "在新标签页预览 HTML 动态模板" : "Preview HTML template in new tab"}>
-                  <Play size={15} /> {zh ? "预览" : "Preview"}
-                </button>
-                <button onClick={() => props.onOpenTools("script")}><PencilLine size={15} /> {zh ? "编辑" : "Edit"}</button>
-                <button className="export-action" onClick={() => props.onOpenTools("export")}>
-                  <Download size={15} /> {zh ? "导出" : "Export"}
-                </button>
-              </div>
-            </article>
-          ))}
-        </div>
-        {plans.length === 0 && !script && (
-          <div className="empty-plan-hint">
-            <Sparkles size={28} />
-            <strong>{zh ? "还没有视频方案" : "No plans yet"}</strong>
-            <p>{zh ? "在上方填写主题并点击「生成视频方案」，AI 会自动采集热点并生成脚本。" : "Fill in your topic above and click Generate plans. AI will fetch trends and generate a script automatically."}</p>
+
+        {!hasScript && !busy && (
+          <div className="composer-samples">
+            <span>{zh ? "Seed prompts" : "Seed prompts"}</span>
+            {samples.map((s) => <button key={s} type="button" onClick={() => setPrompt(s)}>{s}</button>)}
           </div>
         )}
+
       </section>
 
-      <div className="feature-strip">
-        <div><Wand2 size={18} /><strong>{zh ? "一键 AI 生成" : "AI generation"}</strong><span>{zh ? "脚本、字幕、图文画面；配音可选" : "Script, subtitles, visual posters; optional voice"}</span></div>
-        <div><Layers size={18} /><strong>{zh ? "多方案备选" : "Multiple plans"}</strong><span>{zh ? "提供不同风格供你选择" : "Choose from distinct styles"}</span></div>
-        <div><Monitor size={18} /><strong>{zh ? "可视化编辑" : "Visual editing"}</strong><span>{zh ? "进入工具箱继续精修" : "Polish in the toolbox"}</span></div>
-        <div><Download size={18} /><strong>{zh ? "多格式导出" : "Multi-format export"}</strong><span>{zh ? "适配抖音、小红书、YouTube" : "Ready for social formats"}</span></div>
-        <div><ShieldCheck size={18} /><strong>{zh ? "本地优先" : "Local-first"}</strong><span>{zh ? "项目文件保存在本地" : "Project files stay local"}</span></div>
-      </div>
+      <aside className="promo-right forge-results">
+        <div className={`film-stage ratio-${ratio.replace(":", "-")} ${busy ? "is-busy" : ""} ${showPreview ? "is-live" : ""}`}>
+          <div className="stage-head">
+            <span>{zh ? "Live render stage" : "Live render stage"}</span>
+            <button className="stage-action" type="button" onClick={() => setPreviewNonce((value) => value + 1)}>
+              <RefreshCw size={14} />
+              {zh ? "刷新" : "Refresh"}
+            </button>
+          </div>
+          {showPreview && previewSrc ? (
+            <iframe key={previewNonce} title="preview" src={previewSrc} />
+          ) : busy ? (
+            <div className="stage-state">
+              <span className="spinner big" />
+              <strong>{props.job?.step ?? (zh ? "生成中…" : "Generating…")}</strong>
+              <p>{zh ? "扫描线会跟着进度向前推。" : "The scan line tracks render progress."}</p>
+              <div className="stage-bar"><span style={{ width: `${jobProgress}%` }} /></div>
+            </div>
+          ) : (
+            <div className="stage-state">
+              <Clapperboard size={34} />
+              <strong>{props.detail ? (zh ? "脚本已进入舞台" : "Script ready on stage") : (zh ? "等一行输入" : "Waiting for prompt")}</strong>
+              <p>{props.detail ? (zh ? "预览、渲染、导出都在这一块。" : "Preview, render, and export live here.") : (zh ? "写一句话，点「生成视频」" : "Type a prompt, then generate.")}</p>
+            </div>
+          )}
+          <div className="stage-radar" />
+        </div>
+      </aside>
+
+      <section className="promo-sidecar forge-sidecar">
+        <article className="result-card">
+          <div className="panel-label">{zh ? "项目状态" : "Project status"}</div>
+          <div className="result-title-row">
+            <strong>{props.detail?.title ?? (zh ? "等待第一条 prompt" : "Waiting for the first prompt")}</strong>
+            <span className={`result-badge ${running ? "running" : hasScript ? "ready" : "idle"}`}>{running ? (zh ? "运行中" : "Running") : hasScript ? (zh ? "可导出" : "Ready") : (zh ? "待输入" : "Idle")}</span>
+          </div>
+          <p className="result-copy">{running ? (props.job?.step ?? (zh ? "任务推进中" : "Job running")) : hasScript ? (zh ? "脚本和预览已接通，主按钮会直接进入导出。" : "Script and preview are wired. The main button jumps into export.") : (zh ? "先写一句 prompt，再选比例。" : "Write one prompt, then choose a ratio.")}</p>
+          <div className="result-stat-grid">
+            <div><span>{zh ? "画幅" : "Ratio"}</span><strong>{ratio}</strong></div>
+            <div><span>{zh ? "模板" : "Template"}</span><strong>{templateLabel(props.detail?.templateId ?? "neo-signal", props.lang)}</strong></div>
+            <div><span>{zh ? "任务" : "Job"}</span><strong>{running ? `${jobProgress}%` : projectStatus}</strong></div>
+            <div><span>{zh ? "脚本场景" : "Script scenes"}</span><strong>{script?.scenes?.length ?? 0}</strong></div>
+          </div>
+          {running && <div className="result-progress"><span style={{ width: `${jobProgress}%` }} /></div>}
+        </article>
+
+        <article className="result-card">
+          <div className="panel-label">{zh ? "图片覆盖" : "Image coverage"}</div>
+          {props.renderQuality ? (
+            <>
+              <div className="result-highlight">
+                <strong>{formatPercent(renderCoverage)}</strong>
+                <span>{zh ? `覆盖 ${renderImageScenes}/${renderSceneCount} 个场景` : `${renderImageScenes}/${renderSceneCount} scenes covered`}</span>
+              </div>
+              <div className="result-summary-list">
+                <div><span>{zh ? "主题" : "Theme"}</span><strong>{props.renderQuality.themeId}</strong></div>
+                <div><span>{zh ? "文本压缩" : "Text clamps"}</span><strong>{clampedTextCount}</strong></div>
+              </div>
+            </>
+          ) : (
+            <div className="result-empty">
+              <ShieldCheck size={16} />
+              <div>
+                <strong>{zh ? "图片覆盖等待首轮渲染" : "Image coverage appears after the first render"}</strong>
+                <p>{zh ? "跑完一次渲染后，这里会显示图片覆盖、场景命中和质量信号。" : "Run one render and this card fills with image coverage, scene hits, and quality signals."}</p>
+              </div>
+            </div>
+          )}
+        </article>
+
+        <article className="result-card">
+          <div className="panel-label">{zh ? "质量摘要" : "Quality summary"}</div>
+          {props.renderQuality ? (
+            <div className="result-summary-list">
+              <div><span>{zh ? "导出 profile" : "Export profile"}</span><strong>{props.renderQuality.renderProfile} / {props.renderQuality.encodeProfile}</strong></div>
+              <div><span>{zh ? "画幅" : "Ratio"}</span><strong>{props.renderQuality.ratio}</strong></div>
+              <div><span>{zh ? "模板分布" : "Template mix"}</span><strong>{formatCountSummary(props.renderQuality.sceneSpecs.templateCounts)}</strong></div>
+              <div><span>{zh ? "视觉分布" : "Visual mix"}</span><strong>{formatCountSummary(props.renderQuality.sceneSpecs.visualTypeCounts)}</strong></div>
+            </div>
+          ) : (
+            <div className="result-empty">
+              <Gauge size={16} />
+              <div>
+                <strong>{zh ? "质量摘要等待导出" : "Quality summary appears after export"}</strong>
+                <p>{zh ? "这里会显示导出 profile、模板分布和视觉分布。" : "This card shows export profile, template mix, and visual mix."}</p>
+              </div>
+            </div>
+          )}
+        </article>
+
+        <article className="result-card result-card-export">
+          <div className="panel-label">{zh ? "导出路径" : "Export path"}</div>
+          {outputPath && outputFileUrl && outputFileName ? (
+            <>
+              <div className="output-file-info">
+                <strong>{outputFileName}</strong>
+                <p className="mono-path">{outputPath}</p>
+              </div>
+              <div className="result-actions">
+                <a className="utility-link" href={outputFileUrl} download={outputFileName}>
+                  <Download size={14} /> {zh ? "下载" : "Download"}
+                </a>
+                <button className="utility-link" onClick={() => props.onOpenFolder(outputPath)}>
+                  <FolderOpen size={14} /> {zh ? "打开文件夹" : "Open folder"}
+                </button>
+                <button className="utility-link" onClick={props.onPreview}>
+                  <Play size={14} /> {zh ? "打开预览" : "Open preview"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="result-empty">
+              <Download size={16} />
+              <div>
+                <strong>{zh ? "导出完成后这里出现下载入口" : "Download and folder actions appear after export"}</strong>
+                <p>{zh ? "成片写入磁盘后，这里会显示文件名、导出路径和动作入口。" : "Once the file lands on disk, this card shows the filename, export path, and action buttons."}</p>
+              </div>
+            </div>
+          )}
+        </article>
+      </section>
     </section>
   );
 }
@@ -755,22 +982,98 @@ function HistoryPage(props: { lang: UiLang; projects: ProjectDetail[]; selectedI
 
 function buildPlanCards(detail: ProjectDetail | undefined, lang: UiLang) {
   const zh = lang === "zh";
-  const title = detail?.script?.title ?? (zh ? "今日 AI 产品信号" : "AI Product Signals");
-  const subtitle = detail?.script?.subtitle ?? (zh ? "Top 5 值得关注的产品" : "Top 5 products to watch");
+  const title = detail?.script?.title ?? (zh ? "自媒体宣传视频" : "Creator promo video");
+  const cardTitle = shortCardTitle(title, zh ? 18 : 34);
+  const subtitle = detail?.script?.subtitle ?? (zh ? "选题、分镜、字幕、发布包" : "Topic, storyboard, subtitles, publish pack");
   const date = new Date(detail?.updatedAt ?? Date.now()).toLocaleString();
   if (!detail?.script) return [];
+  const duration = detail.script.scenes.reduce((sum, scene) => sum + (scene.duration ?? 6), 0);
+  const durationLabel = zh ? `${Math.round(duration)} 秒` : `${Math.round(duration)}s`;
   return [
-    { id: "a", title, subtitle, duration: "58 秒", time: "9:16", created: date, tags: zh ? ["科技快讯风", "节奏紧凑", "双语字幕"] : ["Tech brief", "Fast pace", "Bilingual"] },
-    { id: "b", title: zh ? "今天值得关注的 5 个 AI 产品" : "5 AI Products Worth Watching", subtitle: zh ? "Product Hunt 精选" : "Product Hunt picks", duration: "64 秒", time: "9:16", created: date, tags: zh ? ["产品解说", "双语字幕", "沉浸叙述"] : ["Product brief", "Bilingual", "Narrative"] },
-    { id: "c", title: zh ? "AI 产品 今日盘点" : "AI Product Daily", subtitle: "Top 5", duration: "45 秒", time: "9:16", created: date, tags: zh ? ["极简榜单风", "快节奏", "中文配音"] : ["List style", "Quick cut", "Voiceover"] }
+    { id: "a", title: cardTitle, subtitle: zh ? "快讯版 · 强开场" : "Quick cut · strong hook", duration: durationLabel, time: detail.ratio, created: date, tags: zh ? ["快讯版", "双语字幕", "可发布"] : ["Quick", "Bilingual", "Ready"] },
+    { id: "b", title: zh ? `${cardTitle} · 标准版` : `${cardTitle} · Standard`, subtitle, duration: zh ? `${Math.round(duration * 1.12)} 秒` : `${Math.round(duration * 1.12)}s`, time: detail.ratio, created: date, tags: zh ? ["标准版", "脚本可编", "封面包"] : ["Standard", "Editable", "Cover pack"] },
+    { id: "c", title: zh ? `${cardTitle} · 深度版` : `${cardTitle} · Deep`, subtitle: zh ? "更完整的解释和平台文案" : "Deeper explanation and copy", duration: zh ? `${Math.round(duration * 1.35)} 秒` : `${Math.round(duration * 1.35)}s`, time: detail.ratio === "9:16" ? "16:9" : detail.ratio, created: date, tags: zh ? ["深度版", "发布文案", "剪映备注"] : ["Deep", "Copy", "Jianying note"] }
   ];
+}
+
+function shortCardTitle(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+function titleFromPrompt(prompt: string, lang: UiLang): string {
+  const first = prompt.split(/[\n。.!?？]/).map((part) => part.trim()).find(Boolean);
+  return first ? first.slice(0, 32) : lang === "zh" ? "自媒体宣传视频" : "Creator promo video";
+}
+
+function fileNameFromPath(path: string) {
+  return path.split(/[\\/]/).at(-1) ?? path;
+}
+
+function todayInputValue(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function sourceIcon(id: string) {
   if (id === "manual") return <PencilLine size={15} />;
-  if (id === "rss") return <Activity size={15} />;
+  if (id === "rss") return <Radio size={15} />;
   if (id === "product-hunt") return <PackageOpen size={15} />;
+  if (id === "hacker-news") return <Clapperboard size={15} />;
   return <Database size={15} />;
+}
+
+function contentTypeLabel(id: MatrixContentType | "auto", lang: UiLang) {
+  const zh: Record<MatrixContentType | "auto", string> = {
+    auto: "自动判断",
+    tool_list: "工具榜单",
+    news_explain: "新闻解读",
+    science_explain: "知识科普",
+    history_story: "历史故事",
+    opinion_comment: "观点评论"
+  };
+  const en: Record<MatrixContentType | "auto", string> = {
+    auto: "Auto",
+    tool_list: "Tool list",
+    news_explain: "News explain",
+    science_explain: "Science explain",
+    history_story: "History story",
+    opinion_comment: "Opinion"
+  };
+  return (lang === "zh" ? zh : en)[id];
+}
+
+function platformLabel(id: MatrixPlatform, lang: UiLang) {
+  const zh: Record<MatrixPlatform, string> = {
+    douyin: "抖音",
+    xiaohongshu: "小红书",
+    wechat_channels: "视频号",
+    bilibili: "B 站",
+    youtube: "YouTube",
+    youtube_shorts: "Shorts"
+  };
+  const en: Record<MatrixPlatform, string> = {
+    douyin: "Douyin",
+    xiaohongshu: "Xiaohongshu",
+    wechat_channels: "Channels",
+    bilibili: "Bilibili",
+    youtube: "YouTube",
+    youtube_shorts: "Shorts"
+  };
+  return (lang === "zh" ? zh : en)[id];
+}
+
+function jobStageItems(job: JobRow | undefined, lang: UiLang) {
+  const zh = lang === "zh";
+  const labels = zh ? ["输入", "风格", "分析", "分镜", "渲染", "导出"] : ["Input", "Style", "Analyze", "Storyboard", "Render", "Export"];
+  const progress = job?.progress ?? 0;
+  return labels.map((label, index) => {
+    const threshold = [8, 28, 38, 58, 68, 96][index] ?? 0;
+    const nextThreshold = [28, 38, 58, 68, 96, 101][index] ?? 101;
+    return { label, done: progress >= threshold, active: progress >= threshold && progress < nextThreshold };
+  });
 }
 
 function ContentPanel(props: { lang: UiLang; detail?: ProjectDetail; sources: SourceInfo[]; onFetch: (source: string, options: Record<string, unknown>) => Promise<void> }) {
@@ -994,8 +1297,8 @@ function CoverPanel(props: { lang: UiLang; detail?: ProjectDetail; onSaveScript:
   );
 }
 
-function TemplatePanel(props: { lang: UiLang; detail?: ProjectDetail; onSelect: (templateId: string) => Promise<void> }) {
-  return <TemplateChooser lang={props.lang} activeId={props.detail?.templateId ?? "neo-signal"} onSelect={props.onSelect} compact />;
+function TemplatePanel(props: { lang: UiLang; registry?: MotionTemplateRegistry; detail?: ProjectDetail; onSelect: (templateId: string) => Promise<void> }) {
+  return <TemplateChooser lang={props.lang} registry={props.registry} activeId={props.detail?.templateId ?? "neo-signal"} onSelect={props.onSelect} compact />;
 }
 
 function ExportPanel(props: {
@@ -1003,7 +1306,8 @@ function ExportPanel(props: {
   ratio: Ratio;
   job?: JobRow;
   outputPath?: string;
-  onRender: (settings: { ratio: Ratio; fps: 24 | 30 | 60; format: "mp4" | "webm"; burnSubtitles: boolean }) => void | Promise<void>;
+  qualityReport?: RenderQualityReport | null;
+  onRender: (settings: ExportSubmissionSettings) => void | Promise<void>;
   onOpenFolder: (path: string) => Promise<void>;
 }) {
   const zh = props.lang === "zh";
@@ -1011,8 +1315,18 @@ function ExportPanel(props: {
   const [fps, setFps] = useState<24 | 30 | 60>(30);
   const [format, setFormat] = useState<"mp4" | "webm">("mp4");
   const [burnSubtitles, setBurnSubtitles] = useState(true);
+  const [renderProfile, setRenderProfile] = useState<ExportProfileChoice>("auto");
   const isRunning = props.job?.status === "running" || props.job?.status === "pending";
   const durationLabel = formatJobDuration(props.job, props.lang);
+  const renderProfileLabel = exportProfileLabel(renderProfile, props.lang);
+  const renderProfileNote = exportProfileNote(renderProfile, props.lang);
+  const renderSettings: ExportSubmissionSettings = {
+    ratio,
+    fps,
+    format,
+    burnSubtitles,
+    ...(renderProfile === "auto" ? {} : { renderProfile })
+  };
 
   return (
     <div className="work-panel">
@@ -1040,14 +1354,61 @@ function ExportPanel(props: {
         </div>
       )}
 
+      <div className="output-profile-note">
+        <div className="panel-label">{zh ? "质量 profile" : "Quality profile"}</div>
+        <strong>{renderProfileLabel}</strong>
+        <p>{renderProfileNote}</p>
+      </div>
+
+      {props.qualityReport ? (
+        <div className="quality-report-card">
+          <div className="panel-label">{zh ? "质量摘要" : "Quality summary"}</div>
+          <div className="quality-report-grid">
+            <div className="quality-report-item">
+              <span>{zh ? "实际导出" : "Actual export"}</span>
+              <strong>{`${props.qualityReport.renderProfile} / ${props.qualityReport.encodeProfile}`}</strong>
+            </div>
+            <div className="quality-report-item">
+              <span>{zh ? "主题" : "Theme"}</span>
+              <strong>{props.qualityReport.themeId}</strong>
+            </div>
+            <div className="quality-report-item">
+              <span>{zh ? "图片覆盖" : "Image coverage"}</span>
+              <strong>{formatPercent(props.qualityReport.sceneSpecs.imageCoverage)} · {props.qualityReport.sceneSpecs.imageSceneCount}/{props.qualityReport.sceneSpecs.sceneCount}</strong>
+            </div>
+            <div className="quality-report-item">
+              <span>{zh ? "text-fit 压缩" : "Text-fit clamps"}</span>
+              <strong>{props.qualityReport.textFitSummary?.clampedTextCount ?? 0}</strong>
+            </div>
+          </div>
+          <div className="quality-report-block">
+            <span>{zh ? "模板分布" : "Template distribution"}</span>
+            <p>{formatCountSummary(props.qualityReport.sceneSpecs.templateCounts)}</p>
+          </div>
+          <div className="quality-report-block">
+            <span>{zh ? "视觉分布" : "Visual distribution"}</span>
+            <p>{formatCountSummary(props.qualityReport.sceneSpecs.visualTypeCounts)}</p>
+          </div>
+        </div>
+      ) : (
+        <div className="quality-report-empty">
+          <ShieldCheck size={16} />
+          <div>
+            <strong>{zh ? "质量报告稍后显示" : "Quality report will appear here"}</strong>
+            <p>{zh ? "完成一次渲染后，这里会显示实际导出 profile、模板分布、图片覆盖和 text-fit 统计。" : "Render once to see actual export profiles, template distribution, image coverage, and text-fit stats."}</p>
+          </div>
+        </div>
+      )}
+
       <div className="form-grid">
         <label>{zh ? "画幅比例" : "Ratio"}<select value={ratio} onChange={(event) => setRatio(event.target.value as Ratio)}><option value="9:16">9:16 竖屏 1080×1920</option><option value="16:9">16:9 横屏 1920×1080</option><option value="1:1">1:1 方形 1080×1080</option><option value="4:5">4:5 社媒 1080×1350</option></select></label>
         <label>{zh ? "帧率" : "FPS"}<select value={fps} onChange={(event) => setFps(Number(event.target.value) as 24 | 30 | 60)}><option value={24}>24 fps</option><option value={30}>30 fps（推荐）</option><option value={60}>60 fps</option></select></label>
         <label>{zh ? "格式" : "Format"}<select value={format} onChange={(event) => setFormat(event.target.value as "mp4" | "webm")}><option value="mp4">MP4（H.264）</option><option value="webm">WebM（VP9）</option></select></label>
+        <label>{zh ? "质量 profile" : "Quality profile"}<select value={renderProfile} onChange={(event) => setRenderProfile(event.target.value as ExportProfileChoice)}><option value="auto">{zh ? "自动" : "Auto"}</option><option value="standard">{zh ? "标准" : "Standard"}</option><option value="high">{zh ? "高质量" : "High quality"}</option></select></label>
         <label className="check-field"><input type="checkbox" checked={burnSubtitles} onChange={(event) => setBurnSubtitles(event.target.checked)} /> {zh ? "烧录字幕到视频" : "Burn subtitles into video"}</label>
       </div>
 
-      <button className={`primary-button render-button ${isRunning ? "loading" : ""}`} disabled={isRunning} onClick={() => props.onRender({ ratio, fps, format, burnSubtitles })}>
+      <button className={`primary-button render-button ${isRunning ? "loading" : ""}`} disabled={isRunning} onClick={() => props.onRender(renderSettings)}>
         {isRunning ? <span className="spinner" /> : <Play size={16} />}
         {isRunning ? (zh ? `渲染中 ${props.job?.progress ?? 0}%…` : `Rendering ${props.job?.progress ?? 0}%…`) : (zh ? "渲染视频" : "Render Video")}
       </button>
@@ -1063,21 +1424,58 @@ function ExportPanel(props: {
   );
 }
 
-function TemplateLibraryPage(props: { lang: UiLang; detail?: ProjectDetail; onSelect: (templateId: string) => Promise<void> }) {
+function formatCountSummary(counts: Record<string, number>): string {
+  const entries = Object.entries(counts).sort((left, right) => right[1] - left[1]);
+  if (entries.length === 0) return "0";
+  return entries
+    .slice(0, 3)
+    .map(([key, count]) => `${key} × ${count}`)
+    .join(" · ");
+}
+
+function formatPercent(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
+function TemplateLibraryPage(props: { lang: UiLang; registry?: MotionTemplateRegistry; detail?: ProjectDetail; onSelect: (templateId: string) => Promise<void> }) {
   return (
     <section className="view-panel">
-      <TemplateChooser lang={props.lang} activeId={props.detail?.templateId ?? "neo-signal"} onSelect={props.onSelect} />
+      <TemplateChooser lang={props.lang} registry={props.registry} activeId={props.detail?.templateId ?? "neo-signal"} onSelect={props.onSelect} />
     </section>
   );
 }
 
-function TemplateChooser(props: { lang: UiLang; activeId: string; onSelect: (templateId: string) => Promise<void>; compact?: boolean }) {
+type TemplateChooserCard = Pick<MotionTemplateManifest, "id" | "name" | "description" | "category" | "tags" | "bestFor">;
+
+function TemplateChooser(props: { lang: UiLang; registry?: MotionTemplateRegistry; activeId: string; onSelect: (templateId: string) => Promise<void>; compact?: boolean }) {
   const zh = props.lang === "zh";
-  const templates = [
-    { id: "neo-signal", title: zh ? "Neo Signal / 科技信号" : "Neo Signal", desc: zh ? "深色视频工作台风格，适合 AI 工具榜单和热点解读。" : "Dark workstation style for AI tools and trend analysis.", ready: true },
-    { id: "clean-product", title: zh ? "Clean Product / 产品简报" : "Clean Product", desc: zh ? "明快产品说明风，适合软件发布和功能盘点。" : "Clean product brief style.", ready: true },
-    { id: "news-terminal", title: zh ? "News Terminal / 新闻终端" : "News Terminal", desc: zh ? "信息终端风，适合资讯快报和多条热点。" : "Terminal-news style for fast updates.", ready: true }
+  const templates: TemplateChooserCard[] = props.registry?.templates ?? [
+    {
+      id: "neo-signal",
+      name: zh ? "Neo Signal / 科技信号" : "Neo Signal",
+      description: zh ? "深色视频工作台风格，适合 AI 工具榜单和热点解读。" : "Dark workstation style for AI tools and trend analysis.",
+      category: "studio",
+      tags: ["dark", "signal", "trend"],
+      bestFor: zh ? ["AI 工具榜单", "热点解读"] : ["AI tool ranking", "trend analysis"]
+    },
+    {
+      id: "clean-product",
+      name: zh ? "Clean Product / 产品简报" : "Clean Product",
+      description: zh ? "明快产品说明风，适合软件发布和功能盘点。" : "Clean product brief style.",
+      category: "studio",
+      tags: ["clean", "product", "launch"],
+      bestFor: zh ? ["软件发布", "功能盘点"] : ["software launch", "feature recap"]
+    },
+    {
+      id: "news-terminal",
+      name: zh ? "News Terminal / 新闻终端" : "News Terminal",
+      description: zh ? "信息终端风，适合资讯快报和多条热点。" : "Terminal-news style for fast updates.",
+      category: "studio",
+      tags: ["terminal", "news", "fast"],
+      bestFor: zh ? ["资讯快报", "多条热点"] : ["news flash", "multi-item updates"]
+    }
   ];
+  const designSystems = props.registry?.designSystems ?? [];
   return (
     <div className="work-panel full-panel">
       <div className="section-title"><Layers size={18} /> {zh ? "模板库" : "Template Library"}</div>
@@ -1085,11 +1483,48 @@ function TemplateChooser(props: { lang: UiLang; activeId: string; onSelect: (tem
         {templates.map((template) => (
           <button key={template.id} className={`template-card ${props.activeId === template.id ? "selected" : ""}`} onClick={() => props.onSelect(template.id)}>
             <div className="template-thumbnail"><Monitor size={28} /><span>{template.id}</span></div>
-            <strong>{template.title}</strong>
-            <p>{template.desc}</p>
+            <strong>{template.name}</strong>
+            <p>{template.description}</p>
+            <div className="template-meta-row">
+              <span>{template.category}</span>
+              <span>{template.tags.slice(0, 3).join(" · ")}</span>
+            </div>
+            <div className="template-bestfor">
+              {template.bestFor.slice(0, props.compact ? 2 : 3).map((item) => <span key={item}>{item}</span>)}
+            </div>
             <em>{props.activeId === template.id ? (zh ? "当前模板" : "Active") : (zh ? "选择模板" : "Select")}</em>
           </button>
         ))}
+      </div>
+      <div className="design-system-section">
+        <div className="panel-toolbar">
+          <div className="section-title"><ShieldCheck size={18} /> {zh ? "open-design 主题" : "open-design Themes"}</div>
+          <span className="contract-pill">{zh ? "DESIGN.md 合约" : "DESIGN.md contract"}</span>
+        </div>
+        <div className="design-system-grid">
+          {designSystems.map((system) => (
+            <article key={system.slug} className="design-system-card">
+              <div className="design-system-head">
+                <div>
+                  <strong>{system.name}</strong>
+                  <span>{system.themeId}</span>
+                </div>
+                <span className="origin-pill">{system.origin.project}</span>
+              </div>
+              <p className="mono-path">{system.designDocPath}</p>
+              <div className="design-meta-line">
+                <span>{zh ? "适合" : "Best for"}: {system.bestFor.slice(0, 3).join(" · ")}</span>
+                <span>{zh ? "标签" : "Tags"}: {system.styleTags.slice(0, 4).join(" · ")}</span>
+              </div>
+              <div className="quality-summary">
+                <strong>{zh ? "质量审查" : "Quality review"}</strong>
+                <ul>
+                  {system.qualityRules.slice(0, props.compact ? 2 : 3).map((rule) => <li key={rule}>{rule}</li>)}
+                </ul>
+              </div>
+            </article>
+          ))}
+        </div>
       </div>
       <div className="form-grid compact">
         <label>{zh ? "主题色" : "Accent"}<select><option>{zh ? "冷光青蓝" : "Cyan blue"}</option><option>{zh ? "低饱和紫" : "Soft violet"}</option></select></label>
@@ -1129,6 +1564,10 @@ function SettingsPage(props: { lang: UiLang; settings: Record<string, string | u
           {field("VOLCENGINE_APP_ID", zh ? "豆包应用 ID" : "Doubao App ID")}
           {field("VOLCENGINE_VOICE_TYPE", zh ? "默认音色" : "Default Voice")}
         </div>
+      </div>
+      <div className="work-panel">
+        <div className="section-title"><Image size={18} /> {zh ? "本地程序化视频引擎" : "Programmatic Video Engine"}</div>
+        <p className="settings-note">{zh ? "TrendForge 自己生成画面、动效、字幕、安全区、封面和最终 MP4。当前重点是低成本矩阵批量、可控风格、可编辑工程和稳定发布包。" : "TrendForge generates visuals, motion, captions, safe areas, covers, and final MP4 locally. The focus is low-cost batch production, controllable style, editable project data, and stable publishing packages."}</p>
       </div>
       <div className="work-panel">
         <div className="section-title"><SlidersHorizontal size={18} /> {zh ? "数据源与本地工具" : "Sources and Local Tools"}</div>
@@ -1230,6 +1669,34 @@ function EmptyState(props: { icon: JSX.Element; title: string; children: string;
   return <div className="empty-state">{props.icon}<h2>{props.title}</h2><p>{props.children}</p><button className="primary-button" onClick={props.onAction}>{props.action}</button></div>;
 }
 
+function exportProfileLabel(profile: ExportProfileChoice, lang: UiLang) {
+  const zh: Record<ExportProfileChoice, string> = {
+    auto: "自动",
+    standard: "标准",
+    high: "高质量"
+  };
+  const en: Record<ExportProfileChoice, string> = {
+    auto: "Auto",
+    standard: "Standard",
+    high: "High quality"
+  };
+  return (lang === "zh" ? zh : en)[profile];
+}
+
+function exportProfileNote(profile: ExportProfileChoice, lang: UiLang) {
+  const zh: Record<ExportProfileChoice, string> = {
+    auto: "由服务端按 DPR 和画幅自动选择 profile。",
+    standard: "标准编码，适合快速预览和日常导出。",
+    high: "更低压缩、更细画面，适合最终发布版本。"
+  };
+  const en: Record<ExportProfileChoice, string> = {
+    auto: "The server selects a profile from DPR and frame size.",
+    standard: "Standard encoding for fast previews and everyday exports.",
+    high: "Lower compression and cleaner detail for final publishing."
+  };
+  return (lang === "zh" ? zh : en)[profile];
+}
+
 function label(item: { zh: string; en: string }, lang: UiLang) {
   return lang === "zh" ? item.zh : item.en;
 }
@@ -1265,11 +1732,12 @@ function serviceLabel(labelText: string, lang: UiLang) {
     Voice: "配音",
     Storage: "本地存储",
     "Source Connectors": "Source Connectors",
-    "DeepSeek Script Engine": "DeepSeek Script Engine",
-    "Volcengine Doubao TTS": "Volcengine Doubao TTS",
+    "DeepSeek Script Engine": "DeepSeek",
+    "Volcengine Doubao TTS": "豆包 TTS",
+    "Programmatic Video Engine": "程序化视频引擎",
     "Bilingual Subtitle Engine": "Bilingual Subtitle Engine",
-    "HyperFrames HTML Video Renderer": "HyperFrames HTML Video Renderer",
-    "FFmpeg Export": "FFmpeg Export",
+    "Remotion Multi-scene Renderer": "Remotion 历史适配器",
+    "FFmpeg Export": "FFmpeg",
     "Local Project Studio": "Local Project Studio"
   };
   return lang === "zh" ? map[labelText] ?? labelText : labelText;
@@ -1287,10 +1755,12 @@ function compactStatus(message: string, lang: UiLang) {
     已连接: "Connected",
     本地热点可用: "Local trends ready",
     可配置: "Configurable",
+    "配置图片 Key": "Add image key",
     内置就绪: "Built-in",
     在线: "Online",
     "配置 Key": "Add key",
-    等待内置二进制: "Preparing binary"
+    等待内置二进制: "Preparing binary",
+    就绪: "Ready"
   };
   if (message.startsWith("E:") || message.startsWith("C:")) return "Local storage";
   if (message.includes("TrendForge")) return "Local storage";
@@ -1312,8 +1782,8 @@ function sceneTypeLabel(type: string, lang: UiLang) {
 }
 
 function jobTypeLabel(type: string, lang: UiLang) {
-  const zh: Record<string, string> = { fetch_source: "内容采集", generate_script: "脚本生成", generate_tts: "配音生成", generate_subtitles: "字幕生成", generate_cover: "封面生成", render_video: "视频渲染", export_video: "视频导出", process_video: "视频处理" };
-  const en: Record<string, string> = { fetch_source: "Fetch Source", generate_script: "Generate Script", generate_tts: "Generate Voice", generate_subtitles: "Generate Subtitles", generate_cover: "Generate Cover", render_video: "Render Video", export_video: "Export Video", process_video: "Process Video" };
+  const zh: Record<string, string> = { fetch_source: "内容采集", generate_script: "脚本生成", generate_tts: "配音生成", generate_subtitles: "字幕生成", generate_cover: "封面生成", render_video: "视频渲染", export_video: "视频导出", process_video: "视频处理", product_hunt_video: "Product Hunt 视频生成", promo_video: "宣传视频生成", matrix_video: "矩阵视频生成", motion_render: "MotionGraph 渲染" };
+  const en: Record<string, string> = { fetch_source: "Fetch Source", generate_script: "Generate Script", generate_tts: "Generate Voice", generate_subtitles: "Generate Subtitles", generate_cover: "Generate Cover", render_video: "Render Video", export_video: "Export Video", process_video: "Process Video", product_hunt_video: "Product Hunt Video", promo_video: "Promo Video", matrix_video: "Matrix Video", motion_render: "MotionGraph Render" };
   return (lang === "zh" ? zh : en)[type] ?? type;
 }
 

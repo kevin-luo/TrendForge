@@ -51,9 +51,18 @@ export class JobRunner {
     });
     await writeLog({ projectId, jobId, level: "info", message: "任务开始" });
     try {
+      // Throttle progress writes: handlers (esp. per-frame render loops with
+      // parallel workers) call update() hundreds of times, which floods the
+      // single-writer SQLite db and times it out. Only persist when the integer
+      // percent changes. The check+set before the first await is synchronous, so
+      // concurrent callers can't double-fire at the same percent.
+      let lastProgress = -1;
       const output = await handler(jobId, async (progress, step) => {
-        await prisma.renderJob.update({ where: { id: jobId }, data: { progress, step } });
-        await writeLog({ projectId, jobId, level: "info", message: step, context: { progress } });
+        const percent = Math.max(0, Math.min(100, Math.round(progress)));
+        if (percent === lastProgress) return;
+        lastProgress = percent;
+        await prisma.renderJob.update({ where: { id: jobId }, data: { progress: percent, step } });
+        await writeLog({ projectId, jobId, level: "info", message: step, context: { progress: percent } });
       });
       await prisma.renderJob.update({
         where: { id: jobId },

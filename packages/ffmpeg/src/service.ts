@@ -1,9 +1,12 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { TrendForgeError, type Ratio, type Scene } from "@trendforge/core";
 import type { CommandResult, MediaInfo } from "./types.js";
+
+export type EncodeProfile = "standard" | "high";
 
 export interface SceneVideoOptions {
   scenes: Scene[];
@@ -13,6 +16,7 @@ export interface SceneVideoOptions {
   fps: number;
   outputPath: string;
   codec?: "libx264" | "libvpx-vp9";
+  encodeProfile?: EncodeProfile;
 }
 
 export interface SceneImageInput {
@@ -235,7 +239,14 @@ export class FfmpegService {
    * Assemble a PNG frame sequence into a video.
    * `frameGlob` must be an ffmpeg-style pattern like `/path/frames/frame_%06d.png`
    */
-  async framesToVideo(frameGlob: string, fps: number, duration: number, outputPath: string, codec: "libx264" | "libvpx-vp9" = "libx264"): Promise<string> {
+  async framesToVideo(
+    frameGlob: string,
+    fps: number,
+    duration: number,
+    outputPath: string,
+    codec: "libx264" | "libvpx-vp9" = "libx264",
+    encodeProfile: EncodeProfile = "standard"
+  ): Promise<string> {
     const inputPattern = frameGlob.replace(/\\/g, "/");
     const args = [
       "-y",
@@ -243,8 +254,7 @@ export class FfmpegService {
       "-i", inputPattern,
       "-t", String(duration),
       "-c:v", codec,
-      "-pix_fmt", "yuv420p",
-      ...(codec === "libx264" ? ["-preset", "fast", "-crf", "18"] : ["-b:v", "2M"]),
+      ...encodeArgsFor(codec, encodeProfile),
       outputPath
     ];
     await this.run(this.ffmpegPath, args);
@@ -380,8 +390,8 @@ export class FfmpegService {
         reject(
           new TrendForgeError(
             "FFMPEG_SPAWN_ERROR",
-            `${toolName(command)} 启动失败：未找到可执行文件`,
-            { command, error: error.message, args },
+            `${toolName(command)} 启动失败：请运行 pnpm install，或在设置里填写可执行文件路径`,
+            { command, bundledFfmpegPath, bundledFfprobePath, error: error.message, args },
             500
           )
         );
@@ -404,7 +414,9 @@ export class FfmpegService {
 
 function configuredPath(value: string | undefined, fallback: string): string {
   const next = value?.trim();
-  return next && next !== "ffmpeg" && next !== "ffprobe" ? next : fallback;
+  if (!next || next === "ffmpeg" || next === "ffprobe") return fallback;
+  if (isPathLike(next) && !existsSync(next)) return fallback;
+  return next;
 }
 
 function installerPath(packageName: string, fallback: string): string {
@@ -420,6 +432,10 @@ function toolName(command: string): string {
   return command.toLowerCase().includes("probe") ? "FFprobe" : "FFmpeg";
 }
 
+function isPathLike(value: string): boolean {
+  return value.includes("\\") || value.includes("/") || /^[A-Za-z]:/.test(value);
+}
+
 function parseFps(value: string): number | undefined {
   const [a, b] = value.split("/").map(Number);
   if (!a) return undefined;
@@ -429,4 +445,16 @@ function parseFps(value: string): number | undefined {
 function cropExpression(ratio: Ratio): string {
   const target = ratio === "16:9" ? "16/9" : ratio === "1:1" ? "1/1" : ratio === "4:5" ? "4/5" : "9/16";
   return `crop='if(gt(iw/ih,${target}),ih*${target},iw)':'if(gt(iw/ih,${target}),ih,iw/${target})'`;
+}
+
+function encodeArgsFor(codec: "libx264" | "libvpx-vp9", profile: EncodeProfile): string[] {
+  if (codec === "libvpx-vp9") {
+    return profile === "high"
+      ? ["-pix_fmt", "yuv420p", "-deadline", "good", "-cpu-used", "1", "-crf", "28", "-b:v", "0"]
+      : ["-pix_fmt", "yuv420p", "-deadline", "good", "-cpu-used", "2", "-crf", "34", "-b:v", "0"];
+  }
+
+  return profile === "high"
+    ? ["-pix_fmt", "yuv420p", "-preset", "slow", "-crf", "16"]
+    : ["-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "18"];
 }

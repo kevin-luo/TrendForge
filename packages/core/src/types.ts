@@ -10,9 +10,15 @@ export type JobType =
   | "generate_cover"
   | "render_video"
   | "export_video"
-  | "process_video";
+  | "process_video"
+  | "product_hunt_video"
+  | "promo_video"
+  | "matrix_video"
+  | "motion_render";
 
 export type SourceType = "manual" | "product-hunt" | "hacker-news" | "reddit" | "x-twitter" | "rss";
+export type MatrixContentType = "tool_list" | "news_explain" | "science_explain" | "history_story" | "opinion_comment";
+export type MatrixPlatform = "douyin" | "xiaohongshu" | "wechat_channels" | "bilibili" | "youtube" | "youtube_shorts";
 
 export type FetchOptions = {
   source?: SourceType;
@@ -22,6 +28,7 @@ export type FetchOptions = {
   subreddit?: string;
   rssUrls?: string[];
   query?: string;
+  date?: string;
   manualText?: string;
   manualLinks?: string[];
   timeoutMs?: number;
@@ -87,6 +94,254 @@ export type Scene = {
   metadata?: Record<string, unknown>;
 };
 
+export type ShotTransition = "cut" | "whip" | "zoom" | "wipe" | "glitch" | "flash" | "match";
+
+export type CameraMove =
+  | "push-in"
+  | "pull-out"
+  | "pan-left"
+  | "pan-right"
+  | "tilt-up"
+  | "tilt-down"
+  | "handheld"
+  | "snap-zoom"
+  | "orbit";
+
+export type ShotPace = "snap" | "fast" | "steady";
+
+export type BrollIntent = {
+  query: string;
+  mood: "product" | "news" | "science" | "history" | "opinion" | "creator" | "abstract";
+  source?: "product_asset" | "web_image" | "stock" | "local" | "generated";
+  assetPath?: string;
+  fallbackVisual?:
+    | "screenshot"
+    | "collage"
+    | "diagram"
+    | "keyword-wall"
+    | "timeline"
+    | "data-stream"
+    | "product-interface"
+    | "news-wall"
+    | "creator-desk"
+    | "rank-board"
+    | "workflow-map";
+};
+
+export type SceneShot = {
+  id: string;
+  start: number;
+  duration: number;
+  beat: string;
+  onScreenText: string;
+  narrationText?: string;
+  camera: CameraMove;
+  transitionIn: ShotTransition;
+  transitionOut: ShotTransition;
+  pace: ShotPace;
+  broll: BrollIntent[];
+  sfxCue?: string;
+  bgmCue?: string;
+  visualMotifs?: string[];
+};
+
+export type StoryboardScene = {
+  id: string;
+  type:
+    | "cover"
+    | "overview"
+    | "product"
+    | "hook"
+    | "background"
+    | "timeline"
+    | "item"
+    | "explain"
+    | "comparison"
+    | "quote"
+    | "data"
+    | "summary"
+    | "cta";
+  duration: number;
+  title: string;
+  screenText: string;
+  narrationTextZh: string;
+  narrationTextEn: string;
+  subtitleZh: string;
+  subtitleEn: string;
+  productRank?: number;
+  visualDirection: string;
+  image?: string;
+  assetHints?: string[];
+  keywords?: string[];
+  shots?: SceneShot[];
+  transition?: ShotTransition;
+  camera?: CameraMove;
+  brollQueries?: string[];
+  bgmCue?: string;
+  sfxCue?: string;
+  energy?: "calm" | "steady" | "fast" | "viral";
+};
+
+export type ProductVideoItem = {
+  rank: number;
+  name: string;
+  tagline: string;
+  oneLineZh: string;
+  oneLineEn: string;
+  highlightsZh: string[];
+  highlightsEn: string[];
+  targetUser?: string;
+  whyInterestingZh: string;
+  whyInterestingEn: string;
+  votes?: number;
+  comments?: number;
+  website?: string;
+  productHuntUrl?: string;
+  logoPath?: string;
+  screenshotPath?: string;
+  thumbnailPath?: string;
+};
+
+export type SubtitleTrack = {
+  language: "zh" | "en" | "bilingual";
+  cues: SubtitleCue[];
+};
+
+export type PublishPack = {
+  titles: string[];
+  description: string;
+  hashtags: string[];
+  platformCopies: {
+    douyin?: string;
+    xiaohongshu?: string;
+    wechatChannels?: string;
+    bilibili?: string;
+    youtube?: string;
+  };
+};
+
+export type TimelineEvent = {
+  id: string;
+  title: string;
+  date?: string;
+  description?: string;
+};
+
+export type ContentAngle = {
+  id: string;
+  title: string;
+  audience: string;
+  contentType: MatrixContentType;
+  hook: string;
+  reason: string;
+};
+
+export type ContentAnalysis = {
+  topic: string;
+  contentTypeSuggestion: MatrixContentType[];
+  keyPoints: string[];
+  entities: {
+    people?: string[];
+    companies?: string[];
+    products?: string[];
+    places?: string[];
+    dates?: string[];
+  };
+  timeline?: TimelineEvent[];
+  controversy?: string[];
+  facts: string[];
+  risks?: string[];
+  suggestedAngles: ContentAngle[];
+};
+
+export type CreatorStyleSample = {
+  id?: string;
+  source?: "manual" | "url" | "transcript" | "title_list";
+  title?: string;
+  text: string;
+  url?: string;
+  metrics?: {
+    views?: number;
+    likes?: number;
+    comments?: number;
+    shares?: number;
+    publishedAt?: string;
+  };
+};
+
+export type CreatorStyleAgent = {
+  id: string;
+  name: string;
+  niche: string;
+  language: Language;
+  description: string;
+  hookPatterns: string[];
+  narrativeRhythm: string[];
+  vocabulary: string[];
+  sentenceRules: string[];
+  sceneRules: string[];
+  subtitleRules: string[];
+  visualRules?: string[];
+  audioRules?: string[];
+  coverTitleRules: string[];
+  audienceTriggers: string[];
+  viralMechanics: string[];
+  pacing: {
+    hookSeconds: number;
+    sceneSeconds: number;
+    totalSeconds: number;
+    density: "low" | "medium" | "high";
+  };
+  examples: {
+    opener: string;
+    transition: string;
+    ending: string;
+  };
+  directorPolicy?: {
+    preferredVisualTypes?: string[];
+    transitionBias?: ShotTransition[];
+    cameraBias?: CameraMove[];
+    textDensity?: "low" | "medium" | "high";
+    captionPunchRate?: number;
+  };
+  skillMarkdown: string;
+  rawSummary: string;
+  createdAt: string;
+};
+
+export type VideoStoryboard = {
+  id?: string;
+  title: string;
+  subtitle: string;
+  contentType?: MatrixContentType;
+  persona?: string;
+  platform?: MatrixPlatform;
+  source: "product_hunt" | "manual" | "hacker_news" | "rss" | "reddit" | "x";
+  language: Language;
+  ratio: Ratio;
+  durationTarget: number;
+  scenes: StoryboardScene[];
+  products: ProductVideoItem[];
+  subtitleTracks: SubtitleTrack[];
+  publishPack?: PublishPack;
+  description?: string;
+  hashtags?: string[];
+  candidate?: "a" | "b" | "c";
+  theme?: "paper-ink" | "news-rank" | "product-deep" | "minimal-visual";
+  creatorStyle?: CreatorStyleAgent;
+  audioDirection?: {
+    voiceStyle: "news" | "energetic" | "documentary" | "storytelling" | "commentary";
+    bgmMood: "electronic" | "future-bass" | "hiphop" | "cinematic" | "minimal" | "magic-loop";
+    bpm: number;
+    sfx: string[];
+  };
+  visualSearch?: {
+    provider: "product_assets" | "web_image" | "stock" | "local_first";
+    queries: string[];
+    requiredPerScene: number;
+  };
+};
+
 export type ScriptGenerateInput = {
   projectId: string;
   items: TrendItem[];
@@ -141,6 +396,7 @@ export interface TtsProvider {
 
 export type SubtitleCue = {
   id: string;
+  sceneId?: string;
   start: number;
   end: number;
   text: string;
@@ -179,6 +435,9 @@ export type ExportSettings = {
   width: number;
   height: number;
   fps: 24 | 30 | 60;
+  deviceScaleFactor?: number;
+  renderProfile?: "standard" | "high";
+  qualityProfile?: "standard" | "high";
   format: "mp4" | "webm";
   burnSubtitles: boolean;
   exportSubtitles: boolean;
